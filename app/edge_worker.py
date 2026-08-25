@@ -18,7 +18,7 @@ from pathlib import Path
 import websockets
 
 from pipeline import Pipeline
-from timers import TimerEngine
+from timers import EVENTS, TimerEngine
 
 STATE = Path(__file__).parent / "state"
 CACHE = STATE / "hub_cache.json"
@@ -68,6 +68,13 @@ class Worker:
                 await ws.send(json.dumps({"type": "restore", **self.cached()}))
                 print("hub state restored from local cache (run=%s)"
                       % self.cached().get("run"))
+            if EVENTS.exists():
+                lines = EVENTS.read_text().strip().splitlines()[-5000:]
+                evs = [json.loads(l) for l in lines]
+                for i in range(0, len(evs), 500):
+                    await ws.send(json.dumps({"type": "backfill",
+                                              "events": evs[i:i + 500]}))
+                print(f"backfilled {len(evs)} events to hub")
             last = {"snap": 0.0, "prev": 0.0}
 
             async def sender():

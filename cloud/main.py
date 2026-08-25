@@ -33,7 +33,7 @@ DEFAULTS = {
 settings = dict(DEFAULTS)
 settings_touched = False
 shifts: list = []
-events: deque = deque(maxlen=2000)
+events: deque = deque(maxlen=20000)
 desired_run = False
 agent_ws: WebSocket | None = None
 agent_state: dict = {}
@@ -179,6 +179,91 @@ async def post_shift(body: dict):
     return shifts
 
 
+def cook_for_ts(ts: float):
+    lt = time.localtime(ts)
+    hhmm = time.strftime("%H:%M", lt)
+    for s in shifts:
+        if lt.tm_wday in s.get("days", []) and s["start"] <= hhmm <= s["end"]:
+            return s["cook"]
+    return "—"
+
+
+@app.get("/api/analytics")
+def analytics(period: str = "today"):
+    now = time.time()
+    lt = time.localtime(now)
+    day_start = now - (lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec)
+    since = {"today": day_start, "7d": now - 7 * 86400, "all": 0.0}.get(period, day_start)
+    evs = [e for e in events if e["ts"] >= since]
+
+    ta, tb = settings["target_a"], settings["target_b"]
+    tol_e, tol_l = settings["tol_early"], settings["tol_late"]
+
+    def verdict(e):
+        # judge each patty by the targets that were in force when it cooked;
+        # older events without stamps fall back to the current settings
+        a, b = e.get("ta", ta), e.get("tb", tb)
+        te_, tl_ = e.get("te", tol_e), e.get("tl", tol_l)
+        if e["side_a"] < a - te_ or e["side_b"] < b - te_:
+            return "under"
+        if e["side_a"] > a + tl_ or e["side_b"] > b + tl_:
+            return "over"
+        return "ok"
+
+    done = [e for e in evs if e["type"] == "removed"]
+    flips = [e for e in evs if e["type"] == "flip"]
+
+    def stats(vals):
+        if not vals:
+            return None
+        n = len(vals)
+        mean = sum(vals) / n
+        sd = (sum((v - mean) ** 2 for v in vals) / n) ** 0.5
+        return {"avg": round(mean, 1), "sd": round(sd, 1)}
+
+    verdicts = {"ok": 0, "under": 0, "over": 0}
+    for e in done:
+        verdicts[verdict(e)] += 1
+
+    hours = [{"n": 0, "ok": 0} for _ in range(24)]
+    for e in done:
+        h = time.localtime(e["ts"]).tm_hour
+        hours[h]["n"] += 1
+        hours[h]["ok"] += verdict(e) == "ok"
+
+    cooks: dict = {}
+    for e in done:
+        c = cooks.setdefault(cook_for_ts(e["ts"]),
+                             {"done": 0, "ok": 0, "a": [], "b": []})
+        c["done"] += 1
+        c["ok"] += verdict(e) == "ok"
+        c["a"].append(e["side_a"]); c["b"].append(e["side_b"])
+    grades = {"optimal": 0, "early": 0, "late": 0}
+    for f in flips:
+        if f.get("grade") in grades:
+            grades[f["grade"]] += 1
+
+    return {
+        "period": period, "done": len(done),
+        "compliance": round(100 * verdicts["ok"] / len(done), 1) if done else None,
+        "verdicts": verdicts,
+        "side_a": stats([e["side_a"] for e in done]),
+        "side_b": stats([e["side_b"] for e in done]),
+        "total": stats([e["side_a"] + e["side_b"] for e in done]),
+        "flips": {"n": len(flips), **grades,
+                  "on_time_pct": round(100 * grades["optimal"] / len(flips), 1) if flips else None},
+        "resets": sum(1 for e in evs if e["type"] == "scene_cut"),
+        "invalidated": sum(1 for e in evs if e["type"] == "invalidated"),
+        "hours": hours,
+        "cooks": [{"cook": k, "done": v["done"],
+                   "compliance": round(100 * v["ok"] / v["done"], 1),
+                   "avg_a": round(sum(v["a"]) / len(v["a"]), 1),
+                   "avg_b": round(sum(v["b"]) / len(v["b"]), 1)}
+                  for k, v in sorted(cooks.items(), key=lambda x: -x[1]["done"])],
+        "targets": {"a": ta, "b": tb, "tol_early": tol_e, "tol_late": tol_l},
+    }
+
+
 @app.get("/api/events")
 def get_events(limit: int = 100):
     return list(events)[-limit:][::-1]
@@ -194,7 +279,8 @@ async def ws_agent(sock: WebSocket):
     await sock.accept()
     agent_ws = sock
     agent_seen = time.time()
-    await sock.send_text(json.dumps({"type": "hello", "have_settings": settings_touched}))
+    await sock.send_text(json.dumps({"type": "hello", "have_settings": settings_touched,
+                                     "have_events": len(events) > 0}))
     await push_config()
     try:
         while True:
@@ -208,6 +294,14 @@ async def ws_agent(sock: WebSocket):
                 preview = base64.b64decode(m["jpg"])
             elif m["type"] == "event":
                 events.append(m["event"])
+            elif m["type"] == "backfill":
+                seen = {(e["ts"], e["type"], e.get("pid")) for e in events}
+                fresh = [ev for ev in m["events"]
+                         if (ev["ts"], ev["type"], ev.get("pid")) not in seen]
+                if fresh:
+                    merged = sorted(list(events) + fresh, key=lambda e: e["ts"])
+                    events.clear()
+                    events.extend(merged)
             elif m["type"] == "restore":
                 global desired_run
                 if not settings_touched and m.get("settings"):

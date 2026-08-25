@@ -69,7 +69,9 @@ class TimerEngine:
     def _emit(self, kind: str, p: LivePatty, extra: dict | None = None):
         ev = {"ts": round(time.time(), 2), "type": kind, "pid": p.pid,
               "side": p.side, "flips": p.flips,
-              "side_a": round(p.side_time["A"], 1), "side_b": round(p.side_time["B"], 1)}
+              "side_a": round(p.side_time["A"], 1), "side_b": round(p.side_time["B"], 1),
+              "ta": self.targets["A"], "tb": self.targets["B"],
+              "te": self.targets["tol_early"], "tl": self.targets["tol_late"]}
         if extra:
             ev.update(extra)
         self._emit_raw(ev)

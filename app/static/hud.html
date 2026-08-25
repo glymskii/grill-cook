@@ -131,6 +131,8 @@ function draw(){
       ctx.fillText((remain<0?'+':'')+mm+':'+ss,x,y+r*0.18);
       ctx.font=500+' '+Math.round(r*0.28)+'px system-ui';ctx.fillStyle='#8fa1b3';
       ctx.fillText('side '+p.side+' · #'+p.pid,x,y+r*0.55);
+      if(p.bonus>0){ctx.fillStyle='#f5a623';
+        ctx.fillText('⤺ carry +'+Math.round(p.bonus)+'s',x,y+r*0.85);}
     }
   }
   document.getElementById('vignette').style.opacity=anyOver?1:0;

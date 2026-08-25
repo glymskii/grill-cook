@@ -37,6 +37,20 @@
 <h1>🍔 Grill Cook — Pilot <span style="font-weight:400;color:var(--dim);font-size:14px">· <a href="/hud" target="_blank">open cook HUD ↗</a></span></h1>
 <div class="grid">
 
+<div class="card" style="grid-column:1/-1"><h2>Shift performance
+  <span style="float:right;font-weight:400">
+    <button class="ghost pbtn" data-p="today" style="margin:0;padding:3px 10px">Today</button>
+    <button class="ghost pbtn" data-p="7d" style="margin:0;padding:3px 10px">7 days</button>
+    <button class="ghost pbtn" data-p="all" style="margin:0;padding:3px 10px">All</button>
+  </span></h2>
+  <div class="status" id="kpi"><span class="chip">no data yet</span></div>
+  <div style="display:grid;grid-template-columns:2fr 1fr;gap:14px;margin-top:10px" id="an2">
+    <div><div class="note" style="margin:0 0 4px">Completed per hour · color = compliance (<span style="color:var(--ok)">✔ ≥80%</span> <span style="color:var(--warn)">⚠ 50–80%</span> <span style="color:var(--bad)">⛔ &lt;50%</span>)</div>
+      <svg id="hours" width="100%" height="90" preserveAspectRatio="none"></svg></div>
+    <div><table id="cooks"></table></div>
+  </div>
+</div>
+
 <div class="card"><h2>Pipeline</h2>
   <div class="status" id="status"><span class="chip">loading…</span></div>
   <button id="toggle" style="width:100%">▶ Start</button>
@@ -190,6 +204,38 @@ async function refreshEvents(){const evs=await j('/api/events?limit=50');
    evs.map(e=>`<tr><td>${new Date(e.ts*1000).toLocaleTimeString()}</td>
     <td class="ev-${e.type}">${names[e.type]||e.type}</td><td>${e.pid??''}</td><td>${e.side}</td>
     <td>${e.grade?grades[e.grade]:''}</td><td>${e.side_a}</td><td>${e.side_b}</td></tr>`).join('');}
-loadSettings();refreshShifts();refreshEvents();refreshStatus();
-setInterval(refreshStatus,1500);setInterval(refreshEvents,5000);
+// ---- analytics -----------------------------------------------------------
+let period='today';
+document.querySelectorAll('.pbtn').forEach(b=>b.onclick=()=>{period=b.dataset.p;refreshAnalytics();});
+function chip(label,val,color){return `<span class="chip">${label} <b${color?` style="color:${color}"`:''}>${val}</b></span>`;}
+async function refreshAnalytics(){
+  const a=await j('/api/analytics?period='+period);
+  document.querySelectorAll('.pbtn').forEach(b=>b.style.opacity=b.dataset.p===period?1:0.45);
+  const k=[];
+  k.push(chip('completed',a.done));
+  if(a.compliance!=null){const c=a.compliance>=80?'var(--ok)':a.compliance>=50?'var(--warn)':'var(--bad)';
+    k.push(chip('compliance',a.compliance+'%',c));
+    k.push(chip('✔ ok',a.verdicts.ok,'var(--ok)'),chip('⚠ under',a.verdicts.under,'var(--warn)'),chip('⛔ over',a.verdicts.over,'var(--bad)'));}
+  if(a.side_a)k.push(chip('side A avg',a.side_a.avg+'s ± '+a.side_a.sd));
+  if(a.side_b)k.push(chip('side B avg',a.side_b.avg+'s ± '+a.side_b.sd));
+  if(a.total)k.push(chip('full cook',a.total.avg+'s'));
+  if(a.flips.on_time_pct!=null)k.push(chip('flips on-time',a.flips.on_time_pct+'%'));
+  if(a.resets)k.push(chip('view resets',a.resets));
+  document.getElementById('kpi').innerHTML=k.join('')||'<span class="chip">no completed patties in this period</span>';
+  // hour bars
+  const H=90,W=document.getElementById('hours').clientWidth||600,bw=W/24;
+  const mx=Math.max(1,...a.hours.map(h=>h.n));
+  document.getElementById('hours').innerHTML=a.hours.map((h,i)=>{
+    if(!h.n)return `<rect x="${i*bw+1}" y="${H-14}" width="${bw-2}" height="1" fill="var(--line)"></rect>`;
+    const pct=100*h.ok/h.n,c=pct>=80?'var(--ok)':pct>=50?'var(--warn)':'var(--bad)';
+    const bh=Math.max(3,(H-26)*h.n/mx);
+    return `<rect x="${i*bw+1}" y="${H-14-bh}" width="${bw-2}" height="${bh}" rx="2" fill="${c}"><title>${String(i).padStart(2,'0')}:00 — ${h.n} pc, ${Math.round(pct)}% ok</title></rect>`;
+  }).join('')+a.hours.map((h,i)=>i%6?'':`<text x="${i*bw+1}" y="${H-2}" font-size="9" fill="var(--dim)">${String(i).padStart(2,'0')}</text>`).join('');
+  document.getElementById('cooks').innerHTML='<tr><th>cook</th><th>done</th><th>ok %</th><th>avg A</th><th>avg B</th></tr>'+
+    a.cooks.map(c=>{const col=c.compliance>=80?'var(--ok)':c.compliance>=50?'var(--warn)':'var(--bad)';
+      return `<tr><td>${c.cook}</td><td>${c.done}</td><td style="color:${col}">${c.compliance}%</td><td>${c.avg_a}s</td><td>${c.avg_b}s</td></tr>`;}).join('')
+    ||'<tr><td class="note">no data</td></tr>';
+}
+loadSettings();refreshShifts();refreshEvents();refreshStatus();refreshAnalytics();
+setInterval(refreshStatus,1500);setInterval(refreshEvents,5000);setInterval(refreshAnalytics,10000);
 </script></body></html>
