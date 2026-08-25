@@ -12,6 +12,8 @@ import argparse
 import asyncio
 import base64
 import json
+import os
+import sys
 import time
 from pathlib import Path
 
@@ -111,7 +113,25 @@ class Worker:
                 send_task.cancel()
 
 
+PIDFILE = Path("/tmp/grill_edge_worker.pid")
+
+
+def acquire_singleton():
+    """Two workers fighting over the hub flap the HUD; never allow it."""
+    if PIDFILE.exists():
+        try:
+            old = int(PIDFILE.read_text())
+            os.kill(old, 0)
+        except (ValueError, ProcessLookupError, PermissionError):
+            pass
+        else:
+            sys.exit(f"edge worker already running (pid {old}); "
+                     "kill it first or use that instance")
+    PIDFILE.write_text(str(os.getpid()))
+
+
 async def main():
+    acquire_singleton()
     ap = argparse.ArgumentParser()
     ap.add_argument("--hub", required=True)
     ap.add_argument("--token", required=True)

@@ -277,6 +277,11 @@ async def ws_agent(sock: WebSocket):
         await sock.close(code=4403)
         return
     await sock.accept()
+    if agent_ws is not None:
+        try:
+            await agent_ws.close(code=4409)   # a newer edge instance took over
+        except Exception:
+            pass
     agent_ws = sock
     agent_seen = time.time()
     await sock.send_text(json.dumps({"type": "hello", "have_settings": settings_touched,
@@ -285,6 +290,8 @@ async def ws_agent(sock: WebSocket):
     try:
         while True:
             m = json.loads(await sock.receive_text())
+            if agent_ws is not sock:
+                break                          # superseded: drop stale sender
             agent_seen = time.time()
             if m["type"] == "state":
                 agent_state = m
