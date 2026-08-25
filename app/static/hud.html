@@ -1,0 +1,134 @@
+<!doctype html><html lang="ru"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Grill Cook HUD</title>
+<style>
+  :root{--bg:#0b0f14;--fg:#e8eef5;--dim:#8fa1b3;--ok:#2fbf71;--warn:#f5a623;--bad:#e5484d;--card:#141b23}
+  *{margin:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--fg);font:16px/1.4 -apple-system,system-ui,sans-serif;overflow:hidden;height:100vh}
+  #bar{position:fixed;top:0;left:0;right:0;display:flex;gap:18px;align-items:center;
+       padding:10px 16px;background:linear-gradient(#0b0f14ee,#0b0f1400);z-index:5;font-size:15px}
+  .pill{background:var(--card);border-radius:20px;padding:4px 12px;display:flex;gap:7px;align-items:center}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--bad)}
+  .dot.ok{background:var(--ok)}
+  #streak b{color:var(--warn)}
+  #cv{position:absolute;inset:0}
+  #vignette{position:fixed;inset:0;pointer-events:none;z-index:4;opacity:0;
+            box-shadow:inset 0 0 140px 40px var(--bad);transition:opacity .25s}
+  #toast{position:fixed;left:50%;top:16%;transform:translateX(-50%);z-index:6;
+         padding:14px 26px;border-radius:14px;font-size:26px;font-weight:700;opacity:0;
+         transition:opacity .3s;text-align:center}
+  #offline{position:fixed;inset:auto 0 0 0;background:var(--bad);color:#fff;text-align:center;
+           padding:6px;font-weight:600;z-index:7;display:none}
+  button{background:var(--card);color:var(--fg);border:1px solid #2a3440;border-radius:10px;
+         padding:5px 12px;font-size:14px;cursor:pointer}
+  .spacer{flex:1}
+</style></head><body>
+<div id="bar">
+  <div class="pill"><span class="dot" id="sdot"></span><span id="sname">поток…</span></div>
+  <div class="pill" id="shift">смена не задана</div>
+  <div class="pill">на плите <b id="ncook">0</b> · готово <b id="ndone">0</b></div>
+  <div class="pill" id="streak">🔥 стрик <b>0</b></div>
+  <div class="pill">идеальных <b id="pct">–</b></div>
+  <div class="spacer"></div>
+  <button id="bgbtn">📷 фон</button>
+  <button id="sndbtn">🔊 звук</button>
+</div>
+<canvas id="cv"></canvas>
+<div id="vignette"></div><div id="toast"></div>
+<div id="offline">НЕТ СВЯЗИ — таймеры продолжают идти локально</div>
+<script>
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+let W=0,H=0,frameWH=[1080,1920],showBg=true,sound=false,audio=null;
+let state={patties:[],running:false},offset=0,haveOffset=false,lastMsg=0;
+let streak=0,optimal=0,flips=0;
+const bg=new Image();let bgOk=false;
+bg.onload=()=>bgOk=true; bg.onerror=()=>bgOk=false;
+setInterval(()=>{if(showBg)bg.src='/preview.jpg?t='+Date.now();},1000);
+document.getElementById('bgbtn').onclick=()=>{showBg=!showBg;bgOk=bgOk&&showBg;};
+document.getElementById('sndbtn').onclick=()=>{
+  if(!audio)audio=new (window.AudioContext||window.webkitAudioContext)();
+  sound=!sound;document.getElementById('sndbtn').textContent=sound?'🔊 вкл':'🔇 выкл';};
+function beep(f,ms,vol){if(!sound||!audio)return;const o=audio.createOscillator(),g=audio.createGain();
+  o.frequency.value=f;g.gain.value=vol||0.15;o.connect(g);g.connect(audio.destination);
+  o.start();setTimeout(()=>o.stop(),ms);}
+function resize(){W=cv.width=innerWidth*devicePixelRatio;H=cv.height=innerHeight*devicePixelRatio;
+  cv.style.width=innerWidth+'px';cv.style.height=innerHeight+'px';}
+addEventListener('resize',resize);resize();
+// ---- websocket with reconnect --------------------------------------------
+function connect(){
+  const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws');
+  ws.onmessage=e=>{
+    const m=JSON.parse(e.data);lastMsg=Date.now();
+    document.getElementById('offline').style.display='none';
+    const off=m.server_ts-Date.now()/1000;
+    offset=haveOffset?offset*0.9+off*0.1:off;haveOffset=true;
+    if(m.frame_wh&&m.frame_wh[0])frameWH=m.frame_wh;
+    (m.patties||[]).forEach(p=>{if(p.feedback)onFeedback(p);});
+    if(m.session){streak=m.session.streak;optimal=m.session.optimal;flips=m.session.flips;}
+    state=m;
+    document.getElementById('sdot').className='dot '+(m.running&&m.stream==='ok'?'ok':'');
+    document.getElementById('sname').textContent=!m.running?'конвейер остановлен':(m.stream==='ok'?'поток live':m.stream);
+    document.getElementById('shift').textContent=m.shift?('👨‍🍳 '+m.shift.cook):'смена не задана';
+    document.getElementById('ncook').textContent=(m.patties||[]).length;
+    document.getElementById('ndone').textContent=m.done||0;
+    document.querySelector('#streak b').textContent=streak;
+    document.getElementById('pct').textContent=flips?Math.round(100*optimal/flips)+'%':'–';
+  };
+  ws.onclose=()=>{document.getElementById('offline').style.display='block';setTimeout(connect,1500);};
+  ws.onerror=()=>ws.close();
+}
+connect();
+// ---- feedback one-shots ---------------------------------------------------
+function toast(txt,color){const t=document.getElementById('toast');
+  t.textContent=txt;t.style.background=color;t.style.color='#fff';t.style.opacity=1;
+  clearTimeout(t._h);t._h=setTimeout(()=>t.style.opacity=0,2600);}
+function onFeedback(p){
+  if(p.feedback==='optimal'){toast('🔥 Идеально! Переворот вовремя','#1d9e5f');beep(880,120);setTimeout(()=>beep(1320,150),140);}
+  else if(p.feedback==='early'){toast('⚠️ Рано! +'+(p.bonus||0)+' с добавлено на сторону '+p.side,'#c77d1b');beep(300,300);}
+  else if(p.feedback==='late'){toast('⛔ Поздно перевернули — следите за таймером','#c43b40');beep(180,500,0.25);}
+}
+// ---- render loop ----------------------------------------------------------
+let beepMark={};
+function draw(){
+  requestAnimationFrame(draw);
+  ctx.clearRect(0,0,W,H);
+  const [fw,fh]=frameWH,s=Math.min(W/fw,H/fh),ox=(W-fw*s)/2,oy=(H-fh*s)/2;
+  if(bgOk&&showBg){ctx.globalAlpha=0.35;ctx.drawImage(bg,ox,oy,fw*s,fh*s);ctx.globalAlpha=1;}
+  ctx.strokeStyle='#233040';ctx.strokeRect(ox,oy,fw*s,fh*s);
+  const now=Date.now()/1000+offset;
+  let anyOver=false;
+  for(const p of (state.patties||[])){
+    const x=ox+p.x*fw*s,y=oy+p.y*fh*s,r=Math.max(28*devicePixelRatio,p.r*fw*s);
+    const remain=p.deadline-now,tol=state.targets?state.targets.tol_late:15;
+    const frac=Math.min(1,p.elapsed/(p.target||1)+(now-(state.server_ts||now))/(p.target||1));
+    let ring='#3c74c9',fill='rgba(20,27,35,0.55)';
+    if(remain<=-tol){ring='#e5484d';fill='rgba(229,72,77,0.30)';anyOver=true;}
+    else if(remain<=3.5){ring='#f5a623';fill='rgba(245,166,35,0.22)';}
+    else if(remain<=10){ring='#f5a623';}
+    ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.fillStyle=fill;ctx.fill();
+    ctx.lineWidth=4*devicePixelRatio;ctx.strokeStyle='#2a3440';ctx.stroke();
+    ctx.beginPath();ctx.arc(x,y,r,-Math.PI/2,-Math.PI/2+Math.min(1,frac)*2*Math.PI);
+    ctx.strokeStyle=ring;ctx.setLineDash(p.missing?[8,8]:[]);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle='#e8eef5';ctx.textAlign='center';
+    if(remain<=3.5&&remain>-tol){
+      const n=Math.max(0,Math.ceil(remain));
+      ctx.font=700+' '+Math.round(r*1.1)+'px system-ui';
+      ctx.fillStyle=remain<=0?'#e5484d':'#f5a623';
+      ctx.fillText(remain<=0?'FLIP':String(n),x,y+r*0.38);
+      const key=p.pid+'_'+n;
+      if(n>0&&n<=3&&!beepMark[key]){beepMark[key]=1;beep(660,110);}
+    }else{
+      const t=Math.abs(remain),mm=String(Math.floor(t/60)).padStart(1,'0'),ss=String(Math.floor(t%60)).padStart(2,'0');
+      ctx.font=600+' '+Math.round(r*0.5)+'px system-ui';
+      ctx.fillText((remain<0?'+':'')+mm+':'+ss,x,y+r*0.18);
+      ctx.font=500+' '+Math.round(r*0.28)+'px system-ui';ctx.fillStyle='#8fa1b3';
+      ctx.fillText('сторона '+p.side+' · #'+p.pid,x,y+r*0.55);
+    }
+  }
+  document.getElementById('vignette').style.opacity=anyOver?1:0;
+  if(anyOver&&now-(beepMark._over||0)>2){beepMark._over=now;beep(200,350,0.2);}
+  // local continuation when offline
+  if(Date.now()-lastMsg>4000&&state.running)document.getElementById('offline').style.display='block';
+}
+draw();
+</script></body></html>

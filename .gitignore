@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+# heavy artefacts stay local
+data/
+runs/
+*.pt
+report/pdf/
+app/state/
+app/mediamtx.yml
+.vercel/
+out/

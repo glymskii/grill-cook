@@ -1,0 +1,526 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grill Cook — контроль качества прожарки по сменам</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f4f4f2;
+    --surface-1: #fcfcfb;
+    --line: #e3e2de;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #85847e;
+    --series-1: #2a78d6;
+    --series-2: #eb6834;
+    --good: #0ca30c;
+    --warning: #fab219;
+    --critical: #d03b3b;
+    --grid: #ecebe7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --bg: #111110;
+      --surface-1: #1a1a19;
+      --line: #33332f;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #8d8c83;
+      --series-1: #3987e5;
+      --series-2: #d95926;
+      --grid: #2a2a27;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #111110; --surface-1: #1a1a19; --line: #33332f;
+    --text-primary: #fff; --text-secondary: #c3c2b7; --text-muted: #8d8c83;
+    --series-1: #3987e5; --series-2: #d95926; --grid: #2a2a27;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text-primary);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 28px 20px 64px; }
+  header { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end;
+           justify-content: space-between; margin-bottom: 18px; }
+  h1 { font-size: 25px; margin: 0 0 4px; letter-spacing: -0.02em; }
+  .sub { color: var(--text-secondary); font-size: 14px; }
+  .demo {
+    background: color-mix(in srgb, var(--warning) 14%, var(--surface-1));
+    border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--line));
+    border-radius: 10px; padding: 11px 14px; font-size: 13.5px;
+    color: var(--text-secondary); margin-bottom: 22px;
+  }
+  .demo b { color: var(--text-primary); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(178px, 1fr));
+           gap: 12px; margin-bottom: 20px; }
+  .tile { background: var(--surface-1); border: 1px solid var(--line);
+          border-radius: 12px; padding: 14px 16px; }
+  .tile .k { font-size: 12.5px; color: var(--text-muted); margin-bottom: 6px; }
+  .tile .v { font-size: 27px; font-weight: 650; letter-spacing: -0.02em; }
+  .tile .u { font-size: 15px; font-weight: 500; color: var(--text-secondary); }
+  .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+             margin-bottom: 18px; }
+  .filters label { font-size: 13px; color: var(--text-secondary); }
+  select {
+    font: inherit; font-size: 14px; padding: 7px 10px; border-radius: 9px;
+    border: 1px solid var(--line); background: var(--surface-1);
+    color: var(--text-primary); cursor: pointer;
+  }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(430px, 1fr));
+          gap: 14px; }
+  .card { background: var(--surface-1); border: 1px solid var(--line);
+          border-radius: 12px; padding: 16px 18px 12px; overflow: hidden; }
+  .card h2 { font-size: 15px; margin: 0 0 3px; font-weight: 620; }
+  .card p.note { font-size: 12.5px; color: var(--text-muted); margin: 0 0 12px; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px;
+            color: var(--text-secondary); margin-top: 8px; }
+  .legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block;
+              margin-right: 6px; vertical-align: -1px; }
+  svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .tt {
+    position: fixed; pointer-events: none; z-index: 30; opacity: 0;
+    transition: opacity .09s; background: var(--surface-1);
+    border: 1px solid var(--line); border-radius: 9px; padding: 8px 11px;
+    font-size: 12.5px; color: var(--text-primary); white-space: nowrap;
+    box-shadow: 0 6px 22px rgba(0,0,0,.16);
+  }
+  .tt b { display: block; margin-bottom: 3px; }
+  .tt span { color: var(--text-secondary); }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: right; padding: 8px 8px; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--text-muted); font-weight: 550; font-size: 12.5px; }
+  .pill { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; }
+  .pill svg { width: 13px; height: 13px; flex: none; }
+  footer { margin-top: 26px; font-size: 12.5px; color: var(--text-muted); }
+  .full { grid-column: 1 / -1; }
+  ul.find { margin: 4px 0 6px; padding-left: 20px; }
+  ul.find li { margin-bottom: 7px; color: var(--text-secondary); }
+  ul.find li b { color: var(--text-primary); }
+  @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } .card { padding: 14px; } }
+
+  /* Печать: светлая тема принудительно, фильтры и подсказки убираем,
+     карточки не должны разрываться между страницами */
+  @media print {
+    :root {
+      color-scheme: light;
+      --bg: #fff; --surface-1: #fff; --line: #d8d7d3;
+      --text-primary: #0b0b0b; --text-secondary: #45443f; --text-muted: #6d6c66;
+      --series-1: #2a78d6; --series-2: #eb6834; --grid: #e8e7e3;
+    }
+    @page { size: A4; margin: 14mm 12mm; }
+    body { background: #fff; font-size: 11.5pt; }
+    .wrap { max-width: none; padding: 0; }
+    .filters, .tt, footer .no-print { display: none !important; }
+    .grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .card, .tile { break-inside: avoid; page-break-inside: avoid; }
+    #card-table { break-before: page; }
+    h1 { font-size: 20pt; }
+    .tile .v { font-size: 19pt; }
+    table { font-size: 9.5pt; }
+    th, td { padding: 5px 6px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Контроль качества прожарки</h1>
+      <div class="sub" id="period">Загрузка…</div>
+    </div>
+    <div class="sub">Grill Cook · компьютерное зрение над плитой</div>
+  </header>
+
+  <div class="demo">
+    <b>Иллюстративный пример.</b> Все цифры на этой странице синтетические и
+    сгенерированы для демонстрации формата отчёта. Они не относятся к какому-либо
+    реальному предприятию и не являются производственными записями.
+  </div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <div class="filters">
+    <label for="f-shift">Смена</label>
+    <select id="f-shift"><option value="">все</option></select>
+    <label for="f-cook">Повар</label>
+    <select id="f-cook"><option value="">все</option></select>
+    <label for="f-date">День</label>
+    <select id="f-date"><option value="">вся неделя</option></select>
+  </div>
+
+  <div class="grid">
+    <div class="card full">
+      <h2>Ключевые выводы</h2>
+      <p class="note">Формируются автоматически из данных за период</p>
+      <ul class="find" id="findings"></ul>
+    </div>
+
+    <div class="card">
+      <h2>Соответствие стандарту по поварам</h2>
+      <p class="note">Доля котлет, у которых обе стороны уложились в допуск</p>
+      <div id="c-cooks"></div>
+    </div>
+
+    <div class="card">
+      <h2>Структура отклонений</h2>
+      <p class="note">Куда именно уходит время прожарки</p>
+      <div id="c-verdict"></div>
+      <div class="legend" id="l-verdict"></div>
+    </div>
+
+    <div class="card">
+      <h2>Соответствие по часам</h2>
+      <p class="note">Провалы приходятся на пиковую загрузку</p>
+      <div id="c-hours"></div>
+    </div>
+
+    <div class="card">
+      <h2>Среднее время по сторонам</h2>
+      <p class="note">По дням недели, пунктир — целевое значение</p>
+      <div id="c-days"></div>
+      <div class="legend">
+        <span><i style="background:var(--series-1)"></i>Сторона A</span>
+        <span><i style="background:var(--series-2)"></i>Сторона B</span>
+      </div>
+    </div>
+
+    <div class="card full" id="card-table">
+      <h2>Сводка по сменам</h2>
+      <p class="note">Каждая строка — одна смена одного дня</p>
+      <div style="overflow-x:auto"><table id="t-shifts"></table></div>
+    </div>
+  </div>
+
+  <footer>
+    Данные собираются автоматически: камера над плитой → детекция котлет →
+    трекинг каждой единицы → таймеры сторон. Оператор ничего не отмечает вручную.
+  </footer>
+</div>
+
+<div class="tt" id="tt"></div>
+
+<script>
+const TT = document.getElementById('tt');
+const fmt = n => n.toLocaleString('ru-RU');
+const pct = n => n.toFixed(1).replace('.', ',');
+const ICONS = {
+  good: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 8.5l3.2 3.2L13 5"/></svg>',
+  warning: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M8 1.8L15 14H1z" stroke-linejoin="round"/><path d="M8 6.2v3.4" stroke-width="2"/><circle cx="8" cy="11.9" r=".95" fill="currentColor" stroke="none"/></svg>',
+  critical: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 4l8 8M12 4l-8 8"/></svg>'
+};
+const VERDICTS = [
+  { key: 'Норма',    role: 'good',     css: 'var(--good)' },
+  { key: 'Недожар',  role: 'critical', css: 'var(--critical)' },
+  { key: 'Пережар',  role: 'warning',  css: 'var(--warning)' }
+];
+
+let DATA = null, ALL = [];
+
+function tip(html, e) {
+  TT.innerHTML = html;
+  TT.style.opacity = 1;
+  const r = TT.getBoundingClientRect();
+  let x = e.clientX + 14, y = e.clientY - r.height - 10;
+  if (x + r.width > innerWidth - 8) x = e.clientX - r.width - 14;
+  if (y < 8) y = e.clientY + 16;
+  TT.style.left = x + 'px'; TT.style.top = y + 'px';
+}
+const untip = () => TT.style.opacity = 0;
+
+function svg(w, h) {
+  const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  s.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  s.setAttribute('role', 'img');
+  return s;
+}
+function el(tag, attrs, parent) {
+  const n = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(n);
+  return n;
+}
+
+/* ---------- horizontal bars: compliance per cook ---------- */
+function chartCooks(rows, host) {
+  host.innerHTML = '';
+  const W = 520, rowH = 34, padL = 108, padR = 54;
+  const H = rows.length * rowH + 12;
+  const s = svg(W, H); host.appendChild(s);
+  const max = 100, plotW = W - padL - padR;
+  rows.forEach((r, i) => {
+    const y = i * rowH + 6, bw = Math.max(2, plotW * r.pct / max);
+    el('text', { x: padL - 12, y: y + 15, 'text-anchor': 'end',
+      fill: 'var(--text-secondary)', 'font-size': 13 }, s).textContent = r.cook;
+    el('rect', { x: padL, y, width: plotW, height: 20, rx: 5,
+      fill: 'var(--grid)' }, s);
+    const bar = el('rect', { x: padL, y, width: bw, height: 20, rx: 5,
+      fill: 'var(--series-1)' }, s);
+    el('text', { x: padL + bw + 9, y: y + 15, fill: 'var(--text-primary)',
+      'font-size': 13, 'font-weight': 600 }, s).textContent = pct(r.pct) + '%';
+    const hit = el('rect', { x: 0, y, width: W, height: 20, fill: 'transparent' }, s);
+    hit.style.cursor = 'default';
+    hit.addEventListener('mousemove', e => tip(
+      `<b>${r.cook}</b><span>котлет: ${fmt(r.n)}<br>в норме: ${fmt(r.ok)} · ${pct(r.pct)}%<br>` +
+      `медиана A ${r.ma} с · B ${r.mb} с</span>`, e));
+    hit.addEventListener('mouseleave', untip);
+  });
+}
+
+/* ---------- stacked bar: verdict split ---------- */
+function chartVerdict(counts, total, host, legendHost) {
+  host.innerHTML = ''; legendHost.innerHTML = '';
+  const W = 520, H = 74, s = svg(W, H); host.appendChild(s);
+  let x = 0;
+  VERDICTS.forEach(v => {
+    const n = counts[v.key] || 0;
+    if (!n) return;
+    const w = W * n / total;
+    el('rect', { x: x + 1, y: 10, width: Math.max(1, w - 2), height: 30, rx: 5,
+      fill: v.css }, s);
+    if (w > 62) {
+      el('text', { x: x + w / 2, y: 62, 'text-anchor': 'middle',
+        fill: 'var(--text-primary)', 'font-size': 13, 'font-weight': 600 },
+        s).textContent = pct(100 * n / total) + '%';
+    }
+    const hit = el('rect', { x, y: 4, width: w, height: 42, fill: 'transparent' }, s);
+    hit.addEventListener('mousemove', e => tip(
+      `<b>${v.key}</b><span>${fmt(n)} котлет · ${pct(100 * n / total)}%</span>`, e));
+    hit.addEventListener('mouseleave', untip);
+    x += w;
+    const sp = document.createElement('span');
+    sp.className = 'pill';
+    sp.innerHTML = `<span style="color:${v.css}">${ICONS[v.role]}</span>` +
+      `${v.key} — ${fmt(n)}`;
+    legendHost.appendChild(sp);
+  });
+}
+
+/* ---------- line: compliance by hour ---------- */
+function chartHours(rows, host) {
+  host.innerHTML = '';
+  const W = 520, H = 210, padL = 38, padB = 30, padT = 12, padR = 10;
+  const s = svg(W, H); host.appendChild(s);
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const X = i => padL + plotW * i / (rows.length - 1);
+  const Y = v => padT + plotH * (1 - v / 100);
+  [0, 25, 50, 75, 100].forEach(g => {
+    el('line', { x1: padL, x2: W - padR, y1: Y(g), y2: Y(g),
+      stroke: 'var(--grid)', 'stroke-width': 1 }, s);
+    el('text', { x: padL - 8, y: Y(g) + 4, 'text-anchor': 'end',
+      fill: 'var(--text-muted)', 'font-size': 11 }, s).textContent = g;
+  });
+  const d = rows.map((r, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(r.pct).toFixed(1)}`).join('');
+  el('path', { d, fill: 'none', stroke: 'var(--series-1)', 'stroke-width': 2,
+    'stroke-linejoin': 'round' }, s);
+  rows.forEach((r, i) => {
+    if (i % 2 === 0) {
+      el('text', { x: X(i), y: H - 9, 'text-anchor': 'middle',
+        fill: 'var(--text-muted)', 'font-size': 11 }, s).textContent = r.hour + ':00';
+    }
+    el('circle', { cx: X(i), cy: Y(r.pct), r: 3.4, fill: 'var(--series-1)',
+      stroke: 'var(--surface-1)', 'stroke-width': 2 }, s);
+    const hit = el('rect', { x: X(i) - plotW / rows.length / 2, y: padT,
+      width: plotW / rows.length, height: plotH, fill: 'transparent' }, s);
+    hit.addEventListener('mousemove', e => tip(
+      `<b>${r.hour}:00–${r.hour + 1}:00</b><span>котлет: ${fmt(r.n)}<br>` +
+      `в норме: ${pct(r.pct)}%</span>`, e));
+    hit.addEventListener('mouseleave', untip);
+  });
+}
+
+/* ---------- two lines: mean side times per day ---------- */
+function chartDays(rows, target, host) {
+  host.innerHTML = '';
+  const W = 520, H = 210, padL = 42, padB = 30, padT = 12, padR = 10;
+  const s = svg(W, H); host.appendChild(s);
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const vals = rows.flatMap(r => [r.a, r.b]).concat([target.side_a, target.side_b]);
+  const lo = Math.min(...vals) - 12, hi = Math.max(...vals) + 12;
+  const X = i => padL + plotW * i / (rows.length - 1);
+  const Y = v => padT + plotH * (1 - (v - lo) / (hi - lo));
+  for (let g = Math.ceil(lo / 20) * 20; g <= hi; g += 20) {
+    el('line', { x1: padL, x2: W - padR, y1: Y(g), y2: Y(g),
+      stroke: 'var(--grid)', 'stroke-width': 1 }, s);
+    el('text', { x: padL - 8, y: Y(g) + 4, 'text-anchor': 'end',
+      fill: 'var(--text-muted)', 'font-size': 11 }, s).textContent = g;
+  }
+  [['side_a', 'var(--series-1)'], ['side_b', 'var(--series-2)']].forEach(([k, c]) => {
+    el('line', { x1: padL, x2: W - padR, y1: Y(target[k]), y2: Y(target[k]),
+      stroke: c, 'stroke-width': 1.5, 'stroke-dasharray': '5 4', opacity: .55 }, s);
+  });
+  [['a', 'var(--series-1)'], ['b', 'var(--series-2)']].forEach(([k, c]) => {
+    const d = rows.map((r, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(r[k]).toFixed(1)}`).join('');
+    el('path', { d, fill: 'none', stroke: c, 'stroke-width': 2,
+      'stroke-linejoin': 'round' }, s);
+    rows.forEach((r, i) => el('circle', { cx: X(i), cy: Y(r[k]), r: 3.4, fill: c,
+      stroke: 'var(--surface-1)', 'stroke-width': 2 }, s));
+  });
+  rows.forEach((r, i) => {
+    el('text', { x: X(i), y: H - 9, 'text-anchor': 'middle',
+      fill: 'var(--text-muted)', 'font-size': 11 }, s).textContent = r.label;
+    const hit = el('rect', { x: X(i) - plotW / rows.length / 2, y: padT,
+      width: plotW / rows.length, height: plotH, fill: 'transparent' }, s);
+    hit.addEventListener('mousemove', e => tip(
+      `<b>${r.date}</b><span>сторона A: ${r.a} с (цель ${target.side_a})<br>` +
+      `сторона B: ${r.b} с (цель ${target.side_b})<br>котлет: ${fmt(r.n)}</span>`, e));
+    hit.addEventListener('mouseleave', untip);
+  });
+}
+
+/* ---------- table ---------- */
+function tableShifts(rows, host) {
+  const head = '<tr><th>Дата</th><th>Смена</th><th>Котлет</th><th>Норма</th>' +
+    '<th>Недожар</th><th>Пережар</th><th>Соответствие</th><th>Статус</th></tr>';
+  host.innerHTML = head + rows.map(r => {
+    const st = r.pct >= 75 ? ['good', 'var(--good)', 'в норме']
+      : r.pct >= 55 ? ['warning', 'var(--warning)', 'внимание']
+        : ['critical', 'var(--critical)', 'разбор'];
+    return `<tr><td>${r.date}</td><td>${r.shift}</td><td>${fmt(r.n)}</td>` +
+      `<td>${fmt(r.ok)}</td><td>${fmt(r.under)}</td><td>${fmt(r.over)}</td>` +
+      `<td><b>${pct(r.pct)}%</b></td>` +
+      `<td><span class="pill" style="color:${st[1]}">${ICONS[st[0]]}` +
+      `<span style="color:var(--text-secondary)">${st[2]}</span></span></td></tr>`;
+  }).join('');
+}
+
+/* per-shift aggregation, shared by the findings block and the table */
+function shiftsPreview(rows) {
+  const out = [];
+  [...new Set(rows.map(p => p.date))].sort().forEach(d => {
+    ['Утро', 'День'].forEach(sh => {
+      const sub = rows.filter(p => p.date === d && p.shift === sh);
+      if (!sub.length) return;
+      const o = sub.filter(p => p.verdict === 'Норма').length;
+      out.push({ date: d, shift: sh, n: sub.length, ok: o,
+        under: sub.filter(p => p.verdict === 'Недожар').length,
+        over: sub.filter(p => p.verdict === 'Пережар').length,
+        pct: 100 * o / sub.length });
+    });
+  });
+  return out;
+}
+
+const median = a => {
+  if (!a.length) return 0;
+  const s = [...a].sort((x, y) => x - y), m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+const mean = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
+
+function render() {
+  const fs = document.getElementById('f-shift').value;
+  const fc = document.getElementById('f-cook').value;
+  const fd = document.getElementById('f-date').value;
+  const rows = ALL.filter(p => (!fs || p.shift === fs) && (!fc || p.cook === fc)
+    && (!fd || p.date === fd));
+  const T = DATA.summary.target;
+
+  const ok = rows.filter(p => p.verdict === 'Норма').length;
+  const comp = rows.length ? 100 * ok / rows.length : 0;
+  const worst = [...new Set(rows.map(p => p.hour))].map(h => {
+    const sub = rows.filter(p => p.hour === h);
+    return { h, pct: 100 * sub.filter(p => p.verdict === 'Норма').length / sub.length };
+  }).sort((a, b) => a.pct - b.pct)[0];
+
+  document.getElementById('tiles').innerHTML = [
+    ['Котлет обработано', fmt(rows.length), ''],
+    ['Соответствие стандарту', pct(comp), '%'],
+    ['Медиана · сторона A', Math.round(median(rows.map(p => p.side_a))), ' с'],
+    ['Медиана · сторона B', Math.round(median(rows.map(p => p.side_b))), ' с'],
+    ['Худший час', worst ? worst.h + ':00' : '—', worst ? ` · ${pct(worst.pct)}%` : '']
+  ].map(([k, v, u]) => `<div class="tile"><div class="k">${k}</div>` +
+    `<div class="v">${v}<span class="u">${u}</span></div></div>`).join('');
+
+  const cooks = [...new Set(rows.map(p => p.cook))].map(c => {
+    const sub = rows.filter(p => p.cook === c);
+    const o = sub.filter(p => p.verdict === 'Норма').length;
+    return { cook: c, n: sub.length, ok: o, pct: 100 * o / sub.length,
+      ma: Math.round(median(sub.map(p => p.side_a))),
+      mb: Math.round(median(sub.map(p => p.side_b))) };
+  }).sort((a, b) => b.pct - a.pct);
+  chartCooks(cooks, document.getElementById('c-cooks'));
+
+  const counts = {};
+  rows.forEach(p => counts[p.verdict] = (counts[p.verdict] || 0) + 1);
+  chartVerdict(counts, rows.length || 1, document.getElementById('c-verdict'),
+    document.getElementById('l-verdict'));
+
+  const hours = [...new Set(rows.map(p => p.hour))].sort((a, b) => a - b).map(h => {
+    const sub = rows.filter(p => p.hour === h);
+    return { hour: h, n: sub.length,
+      pct: 100 * sub.filter(p => p.verdict === 'Норма').length / sub.length };
+  });
+  chartHours(hours, document.getElementById('c-hours'));
+
+  const WD = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+  const days = [...new Set(rows.map(p => p.date))].sort().map(d => {
+    const sub = rows.filter(p => p.date === d);
+    return { date: d, label: WD[new Date(d).getDay()], n: sub.length,
+      a: Math.round(mean(sub.map(p => p.side_a))),
+      b: Math.round(mean(sub.map(p => p.side_b))) };
+  });
+  chartDays(days, T, document.getElementById('c-days'));
+
+  /* findings: state the few things a manager would act on */
+  const F = [];
+  const under = rows.filter(p => p.verdict === 'Недожар').length;
+  const over = rows.filter(p => p.verdict === 'Пережар').length;
+  F.push(`Из <b>${fmt(rows.length)}</b> котлет за период стандарт соблюдён у ` +
+    `<b>${pct(comp)}%</b>. Основное отклонение — ` +
+    (under >= over ? `недожар (${pct(100 * under / rows.length)}%): котлету снимают раньше срока`
+      : `пережар (${pct(100 * over / rows.length)}%): котлета лежит на плите дольше нормы`) + '.');
+  const weak = cooks.filter(c => c.pct < 50);
+  if (weak.length) {
+    F.push(`Двое сотрудников резко выбиваются: <b>${weak.map(c => c.cook).join(', ')}</b> — ` +
+      `соответствие ${weak.map(c => pct(c.pct) + '%').join(' и ')} против ` +
+      `${pct(cooks[0].pct)}% у лучшего результата. Медиана стороны A у них ` +
+      `${weak.map(c => c.ma + ' с').join(' и ')} при норме ${T.side_a} с — ` +
+      `это вопрос обучения, а не оборудования.`);
+  }
+  const peaks = hours.filter(h => h.pct < 50).map(h => h.hour + ':00');
+  if (peaks.length) {
+    F.push(`Провалы качества концентрируются в часы пик (<b>${peaks.join(', ')}</b>) — ` +
+      `в это время соответствие падает ниже 50%. Это не разброс по людям, ` +
+      `а системная перегрузка линии.`);
+  }
+  const bad = shiftsPreview(rows).filter(s => s.pct < 50);
+  if (bad.length) {
+    F.push(`Смен с соответствием ниже 50%: <b>${bad.length}</b> ` +
+      `(${bad.map(s => s.date + ' · ' + s.shift.toLowerCase()).join('; ')}). ` +
+      `Их стоит разобрать отдельно.`);
+  }
+  F.push(`Данные снимаются с камеры без участия персонала, поэтому отчёт ` +
+    `отражает фактическую прожарку, а не отметки в чек-листе.`);
+  document.getElementById('findings').innerHTML = F.map(t => `<li>${t}</li>`).join('');
+
+  tableShifts(shiftsPreview(rows), document.getElementById('t-shifts'));
+}
+
+fetch('data.json').then(r => r.json()).then(j => {
+  DATA = j; ALL = j.patties;
+  const T = j.summary.target;
+  document.getElementById('period').textContent =
+    `Период ${j.summary.period.from} — ${j.summary.period.to} · ` +
+    `стандарт: сторона A ${T.side_a} с, сторона B ${T.side_b} с, допуск ±${T.tolerance} с`;
+  const fill = (id, vals) => {
+    const s = document.getElementById(id);
+    vals.forEach(v => { const o = document.createElement('option');
+      o.value = o.textContent = v; s.appendChild(o); });
+    s.addEventListener('change', render);
+  };
+  fill('f-shift', [...new Set(ALL.map(p => p.shift))]);
+  fill('f-cook', [...new Set(ALL.map(p => p.cook))].sort());
+  fill('f-date', [...new Set(ALL.map(p => p.date))].sort());
+  render();
+});
+</script>
+</body>
+</html>

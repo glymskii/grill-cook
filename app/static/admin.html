@@ -1,0 +1,139 @@
+<!doctype html><html lang="ru"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Grill Cook — админка пилота</title>
+<style>
+  :root{--bg:#f4f6f9;--fg:#17222d;--card:#fff;--line:#dde4ec;--dim:#5b6b7b;
+        --ok:#1d9e5f;--warn:#c77d1b;--bad:#c43b40;--accent:#2a78d6}
+  @media(prefers-color-scheme:dark){:root{--bg:#0b0f14;--fg:#e8eef5;--card:#141b23;--line:#243040;--dim:#8fa1b3;--accent:#3987e5}}
+  *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);
+    font:15px/1.45 -apple-system,system-ui,sans-serif;padding:18px}
+  h1{font-size:20px;margin:0 0 14px}h2{font-size:15px;margin:0 0 10px}
+  .grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));max-width:1200px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  label{display:block;font-size:12.5px;color:var(--dim);margin:8px 0 3px}
+  input,select{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:8px;
+    background:var(--bg);color:var(--fg);font-size:14px}
+  .row{display:flex;gap:10px}.row>*{flex:1}
+  button{margin-top:10px;padding:8px 14px;border:0;border-radius:9px;background:var(--accent);
+    color:#fff;font-size:14px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+  button.stop{background:var(--bad)}
+  .status{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+  .chip{background:var(--bg);border:1px solid var(--line);border-radius:16px;padding:3px 10px;font-size:13px}
+  .chip b{font-weight:600}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  td,th{padding:5px 7px;border-bottom:1px solid var(--line);text-align:left}
+  .ev-flip{color:var(--accent)}.ev-placed{color:var(--ok)}.ev-removed{color:var(--dim)}
+  .g-optimal{color:var(--ok)}.g-early{color:var(--warn)}.g-late{color:var(--bad)}
+  .note{font-size:12.5px;color:var(--dim);margin-top:6px}
+  #preview{width:100%;border-radius:8px;margin-top:8px;display:none}
+  .rec{font-size:15px;margin-top:8px}
+  a{color:var(--accent)}
+</style></head><body>
+<h1>🍔 Grill Cook — пилот <span style="font-weight:400;color:var(--dim);font-size:14px">· <a href="/hud" target="_blank">открыть HUD для жарщика ↗</a></span></h1>
+<div class="grid">
+
+<div class="card"><h2>Конвейер</h2>
+  <div class="status" id="status"><span class="chip">загрузка…</span></div>
+  <div class="row"><button id="start">▶ Запустить</button><button id="stopb" class="stop">■ Остановить</button></div>
+  <img id="preview" alt="">
+  <div class="note">Превью обновляется раз в секунду, когда конвейер работает.</div>
+</div>
+
+<div class="card"><h2>Камера и модель</h2>
+  <label>RTSP-ссылка (камера партнёра публикует на этот сервер: rtsp://&lt;хост&gt;:8555/cam)</label>
+  <input id="rtsp_url">
+  <div class="row">
+    <div><label>Модель</label><select id="model">
+      <option value="finetuned">Дообученная (patty_v1)</option>
+      <option value="world">YOLO-World (zero-shot, запасная)</option></select></div>
+    <div><label>Разрешение</label><select id="imgsz"><option>960</option><option>640</option></select></div>
+    <div><label>Порог conf</label><input id="conf" type="number" step="0.01"></div>
+  </div>
+  <button id="saveCam">Сохранить</button>
+  <div class="note">Смена настроек применяется после перезапуска конвейера.</div>
+</div>
+
+<div class="card"><h2>Котлета и плита → целевые времена</h2>
+  <div class="row">
+    <div><label>Диаметр, см</label><input id="diameter_cm" type="number" step="0.5"></div>
+    <div><label>Толщина, см</label><input id="thickness_cm" type="number" step="0.1"></div>
+  </div>
+  <div class="row">
+    <div><label>Плита, °C</label><input id="griddle_c" type="number" step="5"></div>
+    <div><label>Морозилка, °C</label><input id="freezer_c" type="number" step="1"></div>
+  </div>
+  <button class="ghost" id="calc">Рассчитать рекомендацию</button>
+  <div class="rec" id="rec"></div>
+  <div class="row">
+    <div><label>Цель сторона A, с</label><input id="target_a" type="number"></div>
+    <div><label>Цель сторона B, с</label><input id="target_b" type="number"></div>
+  </div>
+  <div class="row">
+    <div><label>Допуск «рано», с</label><input id="tol_early" type="number"></div>
+    <div><label>Допуск «поздно», с</label><input id="tol_late" type="number"></div>
+  </div>
+  <button id="saveRec">Сохранить цели</button>
+  <div class="note">⚠️ Рекомендация — оценка v0. Безопасность: фарш должен достигать 71°C внутри — проверяйте термометром.</div>
+</div>
+
+<div class="card"><h2>Смены</h2>
+  <div class="row">
+    <div><label>Жарщик (ФИО)</label><input id="s_cook"></div>
+    <div><label>Дата</label><input id="s_date" type="date"></div>
+  </div>
+  <div class="row">
+    <div><label>С</label><input id="s_start" type="time"></div>
+    <div><label>До</label><input id="s_end" type="time"></div>
+  </div>
+  <button id="addShift">Добавить смену</button>
+  <table id="shifts"></table>
+</div>
+
+<div class="card" style="grid-column:1/-1"><h2>События</h2>
+  <table id="events"><tr><th>время</th><th>событие</th><th>#</th><th>сторона</th><th>оценка</th><th>A, с</th><th>B, с</th></tr></table>
+</div>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const FIELDS=['rtsp_url','model','imgsz','conf','diameter_cm','thickness_cm','griddle_c','freezer_c','target_a','target_b','tol_early','tol_late'];
+async function j(u,opt){const r=await fetch(u,opt);return r.json();}
+async function loadSettings(){const s=await j('/api/settings');FIELDS.forEach(f=>{if($(f))$(f).value=s[f];});}
+function collect(keys){const o={};keys.forEach(f=>{const v=$(f).value;o[f]=isNaN(+v)||v===''?v:+v;});return o;}
+$('saveCam').onclick=()=>j('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(collect(['rtsp_url','model','imgsz','conf']))}).then(()=>alert('Сохранено. Перезапустите конвейер.'));
+$('saveRec').onclick=()=>j('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(collect(['diameter_cm','thickness_cm','griddle_c','freezer_c','target_a','target_b','tol_early','tol_late']))}).then(()=>alert('Цели сохранены (применяются сразу).'));
+$('calc').onclick=async()=>{const p=collect(['diameter_cm','thickness_cm','griddle_c','freezer_c']);
+  const r=await j(`/api/recommend?d=${p.diameter_cm}&h=${p.thickness_cm}&tg=${p.griddle_c}&tf=${p.freezer_c}`);
+  $('rec').innerHTML=`Рекомендация: <b>A ${r.side_a} c</b> · <b>B ${r.side_b} c</b> <button class="ghost" style="margin:0 0 0 8px;padding:3px 10px" onclick="applyRec(${r.side_a},${r.side_b})">применить</button><div class="note">${r.note}</div>`;};
+window.applyRec=(a,b)=>{$('target_a').value=a;$('target_b').value=b;};
+$('start').onclick=()=>j('/api/pipeline/start',{method:'POST'});
+$('stopb').onclick=()=>j('/api/pipeline/stop',{method:'POST'});
+async function refreshStatus(){const s=await j('/api/status');
+  const chips=[];
+  chips.push(`<span class="chip">состояние <b style="color:${s.running?'var(--ok)':'var(--bad)'}">${s.running?'работает':'остановлен'}</b></span>`);
+  if(s.running){chips.push(`<span class="chip">поток <b>${s.stream||'…'}</b></span>`,
+    `<span class="chip">камера <b>${s.source_fps||0}</b> fps</span>`,
+    `<span class="chip">обработка <b>${s.processed_fps||0}</b> fps</span>`,
+    `<span class="chip">детекция <b>${s.detect_ms||0}</b> мс</span>`);}
+  if(s.shift)chips.push(`<span class="chip">смена <b>${s.shift.cook}</b></span>`);
+  $('status').innerHTML=chips.join('');
+  $('preview').style.display=s.running?'block':'none';
+  if(s.running)$('preview').src='/preview.jpg?t='+Date.now();}
+async function refreshShifts(){const list=await j('/api/shifts');
+  $('shifts').innerHTML='<tr><th>жарщик</th><th>дата</th><th>часы</th><th></th></tr>'+
+   list.map((s,i)=>`<tr><td>${s.cook}</td><td>${s.date}</td><td>${s.start}–${s.end}</td>
+   <td><a href="#" onclick="delShift(${i});return false">✕</a></td></tr>`).join('');}
+window.delShift=i=>j('/api/shifts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({delete:i})}).then(refreshShifts);
+$('addShift').onclick=()=>{const b=collect(['s_cook','s_date','s_start','s_end']);
+  j('/api/shifts',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({cook:b.s_cook,date:b.s_date,start:b.s_start,end:b.s_end})}).then(refreshShifts);};
+async function refreshEvents(){const evs=await j('/api/events?limit=50');
+  const names={placed:'🟢 положили',flip:'🔄 переворот',removed:'⚪ сняли'};
+  const grades={optimal:'<span class="g-optimal">✔ вовремя</span>',early:'<span class="g-early">⚠ рано</span>',late:'<span class="g-late">⛔ поздно</span>'};
+  $('events').innerHTML='<tr><th>время</th><th>событие</th><th>#</th><th>сторона</th><th>оценка</th><th>A, с</th><th>B, с</th></tr>'+
+   evs.map(e=>`<tr><td>${new Date(e.ts*1000).toLocaleTimeString()}</td>
+    <td class="ev-${e.type}">${names[e.type]||e.type}</td><td>${e.pid}</td><td>${e.side}</td>
+    <td>${e.grade?grades[e.grade]:''}</td><td>${e.side_a}</td><td>${e.side_b}</td></tr>`).join('');}
+loadSettings();refreshShifts();refreshEvents();refreshStatus();
+setInterval(refreshStatus,1500);setInterval(refreshEvents,5000);
+</script></body></html>
