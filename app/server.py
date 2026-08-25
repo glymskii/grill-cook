@@ -132,11 +132,11 @@ def status():
 
 
 def active_shift():
+    """Shifts are weekly: cook + ISO weekdays (0=Mon) + hour range."""
     now = time.localtime()
-    today = time.strftime("%Y-%m-%d", now)
     hhmm = time.strftime("%H:%M", now)
     for s in shifts:
-        if s["date"] == today and s["start"] <= hhmm <= s["end"]:
+        if now.tm_wday in s.get("days", []) and s["start"] <= hhmm <= s["end"]:
             return s
     return None
 
@@ -153,7 +153,7 @@ async def post_shift(body: dict):
         if 0 <= idx < len(shifts):
             shifts.pop(idx)
     else:
-        shifts.append({"cook": body["cook"], "date": body["date"],
+        shifts.append({"cook": body["cook"], "days": [int(d) for d in body["days"]],
                        "start": body["start"], "end": body["end"]})
     save("shifts.json", shifts)
     return shifts

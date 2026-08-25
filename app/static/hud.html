@@ -1,4 +1,4 @@
-<!doctype html><html lang="ru"><head>
+<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Grill Cook HUD</title>
 <style>
@@ -24,18 +24,18 @@
   .spacer{flex:1}
 </style></head><body>
 <div id="bar">
-  <div class="pill"><span class="dot" id="sdot"></span><span id="sname">поток…</span></div>
-  <div class="pill" id="shift">смена не задана</div>
-  <div class="pill">на плите <b id="ncook">0</b> · готово <b id="ndone">0</b></div>
-  <div class="pill" id="streak">🔥 стрик <b>0</b></div>
-  <div class="pill">идеальных <b id="pct">–</b></div>
+  <div class="pill"><span class="dot" id="sdot"></span><span id="sname">stream…</span></div>
+  <div class="pill" id="shift">no shift</div>
+  <div class="pill">on grill <b id="ncook">0</b> · done <b id="ndone">0</b></div>
+  <div class="pill" id="streak">🔥 streak <b>0</b></div>
+  <div class="pill">on-target <b id="pct">–</b></div>
   <div class="spacer"></div>
-  <button id="bgbtn">📷 фон</button>
-  <button id="sndbtn">🔊 звук</button>
+  <button id="bgbtn">📷 camera</button>
+  <button id="sndbtn">🔊 sound</button>
 </div>
 <canvas id="cv"></canvas>
 <div id="vignette"></div><div id="toast"></div>
-<div id="offline">НЕТ СВЯЗИ — таймеры продолжают идти локально</div>
+<div id="offline">CONNECTION LOST — timers keep running locally</div>
 <script>
 const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
 let W=0,H=0,frameWH=[1080,1920],showBg=true,sound=false,audio=null;
@@ -47,7 +47,7 @@ setInterval(()=>{if(showBg)bg.src='/preview.jpg?t='+Date.now();},1000);
 document.getElementById('bgbtn').onclick=()=>{showBg=!showBg;bgOk=bgOk&&showBg;};
 document.getElementById('sndbtn').onclick=()=>{
   if(!audio)audio=new (window.AudioContext||window.webkitAudioContext)();
-  sound=!sound;document.getElementById('sndbtn').textContent=sound?'🔊 вкл':'🔇 выкл';};
+  sound=!sound;document.getElementById('sndbtn').textContent=sound?'🔊 on':'🔇 off';};
 function beep(f,ms,vol){if(!sound||!audio)return;const o=audio.createOscillator(),g=audio.createGain();
   o.frequency.value=f;g.gain.value=vol||0.15;o.connect(g);g.connect(audio.destination);
   o.start();setTimeout(()=>o.stop(),ms);}
@@ -67,8 +67,8 @@ function connect(){
     if(m.session){streak=m.session.streak;optimal=m.session.optimal;flips=m.session.flips;}
     state=m;
     document.getElementById('sdot').className='dot '+(m.running&&m.stream==='ok'?'ok':'');
-    document.getElementById('sname').textContent=!m.running?'конвейер остановлен':(m.stream==='ok'?'поток live':m.stream);
-    document.getElementById('shift').textContent=m.shift?('👨‍🍳 '+m.shift.cook):'смена не задана';
+    document.getElementById('sname').textContent=!m.running?'pipeline stopped':(m.stream==='ok'?'live':m.stream);
+    document.getElementById('shift').textContent=m.shift?('👨‍🍳 '+m.shift.cook):'no shift';
     document.getElementById('ncook').textContent=(m.patties||[]).length;
     document.getElementById('ndone').textContent=m.done||0;
     document.querySelector('#streak b').textContent=streak;
@@ -83,9 +83,9 @@ function toast(txt,color){const t=document.getElementById('toast');
   t.textContent=txt;t.style.background=color;t.style.color='#fff';t.style.opacity=1;
   clearTimeout(t._h);t._h=setTimeout(()=>t.style.opacity=0,2600);}
 function onFeedback(p){
-  if(p.feedback==='optimal'){toast('🔥 Идеально! Переворот вовремя','#1d9e5f');beep(880,120);setTimeout(()=>beep(1320,150),140);}
-  else if(p.feedback==='early'){toast('⚠️ Рано! +'+(p.bonus||0)+' с добавлено на сторону '+p.side,'#c77d1b');beep(300,300);}
-  else if(p.feedback==='late'){toast('⛔ Поздно перевернули — следите за таймером','#c43b40');beep(180,500,0.25);}
+  if(p.feedback==='optimal'){toast('🔥 Perfect flip — right on time!','#1d9e5f');beep(880,120);setTimeout(()=>beep(1320,150),140);}
+  else if(p.feedback==='early'){toast('⚠️ Too early! +'+(p.bonus||0)+'s added to side '+p.side,'#c77d1b');beep(300,300);}
+  else if(p.feedback==='late'){toast('⛔ Too late — watch the countdown','#c43b40');beep(180,500,0.25);}
 }
 // ---- render loop ----------------------------------------------------------
 let beepMark={};
@@ -122,7 +122,7 @@ function draw(){
       ctx.font=600+' '+Math.round(r*0.5)+'px system-ui';
       ctx.fillText((remain<0?'+':'')+mm+':'+ss,x,y+r*0.18);
       ctx.font=500+' '+Math.round(r*0.28)+'px system-ui';ctx.fillStyle='#8fa1b3';
-      ctx.fillText('сторона '+p.side+' · #'+p.pid,x,y+r*0.55);
+      ctx.fillText('side '+p.side+' · #'+p.pid,x,y+r*0.55);
     }
   }
   document.getElementById('vignette').style.opacity=anyOver?1:0;

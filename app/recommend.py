@@ -17,4 +17,4 @@ def recommend(d_cm: float, h_cm: float, griddle_c: float, freezer_c: float):
     k *= 1 + max(0.0, -freezer_c - 18) * 0.004
     clamp = lambda v: round(max(45, min(600, v)))
     return {"side_a": clamp(180 * k), "side_b": clamp(150 * k),
-            "note": "Оценка v0 — откалибруйте термометром: фарш должен достигать 71°C внутри."}
+            "note": "v0 estimate — calibrate with a thermometer: ground beef must reach 160°F / 71°C inside."}
