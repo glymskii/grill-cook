@@ -1,0 +1,122 @@
+"""Edge worker: the MacBook side of the split pilot.
+
+Connects OUTBOUND to the cloud hub over WebSocket (nothing on this machine is
+exposed to the internet), receives settings and the desired run state, runs the
+vision pipeline locally, and streams back status, snapshots, preview frames and
+events. The worker's disk is the durable copy of settings/shifts/events — the
+hub's filesystem is ephemeral, so after a hub redeploy the worker restores them.
+
+Run: .venv/bin/python app/edge_worker.py --hub wss://<hub>/ws/agent --token <AGENT_TOKEN>
+"""
+import argparse
+import asyncio
+import base64
+import json
+import time
+from pathlib import Path
+
+import websockets
+
+from pipeline import Pipeline
+from timers import TimerEngine
+
+STATE = Path(__file__).parent / "state"
+CACHE = STATE / "hub_cache.json"
+
+
+class Worker:
+    def __init__(self):
+        self.pipe = None
+        self.engine = None
+        self.settings = None
+        self.pending_events = []
+
+    def cache(self, data: dict):
+        STATE.mkdir(exist_ok=True)
+        old = json.loads(CACHE.read_text()) if CACHE.exists() else {}
+        old.update(data)
+        CACHE.write_text(json.dumps(old, ensure_ascii=False, indent=1))
+
+    def cached(self) -> dict:
+        return json.loads(CACHE.read_text()) if CACHE.exists() else {}
+
+    def apply(self, settings: dict, run: bool):
+        self.settings = settings
+        self.cache({"settings": settings})
+        if self.engine:
+            self.engine.targets.update({
+                "A": settings["target_a"], "B": settings["target_b"],
+                "tol_early": settings["tol_early"], "tol_late": settings["tol_late"]})
+        running = self.pipe and self.pipe.is_alive()
+        if run and not running:
+            self.engine = TimerEngine({"A": settings["target_a"], "B": settings["target_b"],
+                                       "tol_early": settings["tol_early"],
+                                       "tol_late": settings["tol_late"]})
+            self.engine.on_event = lambda ev: self.pending_events.append(ev)
+            self.pipe = Pipeline(settings, self.engine)
+            self.pipe.start()
+        elif not run and running:
+            self.pipe.stop()
+            self.pipe = None
+
+    async def talk(self, url: str, token: str):
+        async with websockets.connect(url, additional_headers={"x-agent-token": token},
+                                      max_size=2 ** 22) as ws:
+            print("hub connected")
+            hello = json.loads(await ws.recv())
+            if not hello.get("have_settings") and self.cached().get("settings"):
+                await ws.send(json.dumps({"type": "restore", **self.cached()}))
+                print("hub state restored from local cache")
+            last = {"snap": 0.0, "prev": 0.0}
+
+            async def sender():
+                while True:
+                    now = time.time()
+                    running = bool(self.pipe and self.pipe.is_alive())
+                    if now - last["snap"] >= 0.2:
+                        last["snap"] = now
+                        msg = {"type": "state", "ts": round(now, 3), "running": running}
+                        if running:
+                            with self.pipe.engine_lock:
+                                msg["snapshot"] = self.engine.snapshot(now)
+                            msg["status"] = dict(self.pipe.status)
+                            msg["frame_wh"] = self.pipe.frame_wh
+                        while self.pending_events:
+                            await ws.send(json.dumps(
+                                {"type": "event", "event": self.pending_events.pop(0)}))
+                        await ws.send(json.dumps(msg))
+                    if running and now - last["prev"] >= 1.0 and self.pipe.jpeg:
+                        last["prev"] = now
+                        await ws.send(json.dumps(
+                            {"type": "preview",
+                             "jpg": base64.b64encode(self.pipe.jpeg).decode()}))
+                    await asyncio.sleep(0.05)
+
+            send_task = asyncio.create_task(sender())
+            try:
+                async for raw in ws:
+                    m = json.loads(raw)
+                    if m["type"] == "config":
+                        self.apply(m["settings"], m["run"])
+                        if "shifts" in m:
+                            self.cache({"shifts": m["shifts"]})
+            finally:
+                send_task.cancel()
+
+
+async def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--hub", required=True)
+    ap.add_argument("--token", required=True)
+    args = ap.parse_args()
+    w = Worker()
+    while True:
+        try:
+            await w.talk(args.hub, args.token)
+        except Exception as e:
+            print("hub link lost:", e)
+        await asyncio.sleep(2)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

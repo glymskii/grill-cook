@@ -1,0 +1,188 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Grill Cook — Pilot Admin</title>
+<style>
+  :root{--bg:#f4f6f9;--fg:#17222d;--card:#fff;--line:#dde4ec;--dim:#5b6b7b;
+        --ok:#1d9e5f;--warn:#c77d1b;--bad:#c43b40;--accent:#2a78d6}
+  @media(prefers-color-scheme:dark){:root{--bg:#0b0f14;--fg:#e8eef5;--card:#141b23;--line:#243040;--dim:#8fa1b3;--accent:#3987e5}}
+  *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);
+    font:15px/1.45 -apple-system,system-ui,sans-serif;padding:18px}
+  h1{font-size:20px;margin:0 0 14px}h2{font-size:15px;margin:0 0 10px}
+  .grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));max-width:1200px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  label{display:block;font-size:12.5px;color:var(--dim);margin:8px 0 3px}
+  input,select{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:8px;
+    background:var(--bg);color:var(--fg);font-size:14px}
+  .row{display:flex;gap:10px}.row>*{flex:1}
+  button{margin-top:10px;padding:8px 14px;border:0;border-radius:9px;background:var(--accent);
+    color:#fff;font-size:14px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+  button.stop{background:var(--bad)}
+  .status{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+  .chip{background:var(--bg);border:1px solid var(--line);border-radius:16px;padding:3px 10px;font-size:13px}
+  .chip b{font-weight:600}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  td,th{padding:5px 7px;border-bottom:1px solid var(--line);text-align:left}
+  .ev-flip{color:var(--accent)}.ev-placed{color:var(--ok)}.ev-removed{color:var(--dim)}
+  .g-optimal{color:var(--ok)}.g-early{color:var(--warn)}.g-late{color:var(--bad)}
+  .note{font-size:12.5px;color:var(--dim);margin-top:6px}
+  #preview{width:100%;border-radius:8px;margin-top:8px;display:none}
+  .rec{font-size:15px;margin-top:8px}
+  .days{display:flex;gap:5px;margin-top:2px}
+  .days span{flex:1;text-align:center;padding:5px 0;border:1px solid var(--line);
+    border-radius:8px;cursor:pointer;font-size:12.5px;user-select:none}
+  .days span.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+  a{color:var(--accent)}
+</style></head><body>
+<h1>🍔 Grill Cook — Pilot <span style="font-weight:400;color:var(--dim);font-size:14px">· <a href="/hud" target="_blank">open cook HUD ↗</a></span></h1>
+<div class="grid">
+
+<div class="card"><h2>Pipeline</h2>
+  <div class="status" id="status"><span class="chip">loading…</span></div>
+  <div class="row"><button id="start">▶ Start</button><button id="stopb" class="stop">■ Stop</button></div>
+  <img id="preview" alt="">
+  <div class="note">Preview refreshes once a second while the pipeline is running.</div>
+</div>
+
+<div class="card"><h2>Camera &amp; model</h2>
+  <label>RTSP source (partner's webcam publishes to this relay)</label>
+  <input id="rtsp_url">
+  <div class="row">
+    <div><label>Model</label><select id="model">
+      <option value="finetuned">Fine-tuned (patty_v1)</option>
+      <option value="world">YOLO-World (zero-shot fallback)</option></select></div>
+    <div><label>Resolution</label><select id="imgsz"><option>960</option><option>640</option></select></div>
+    <div><label>Conf threshold</label><input id="conf" type="number" step="0.01"></div>
+  </div>
+  <button id="saveCam">Save</button>
+  <div class="note">Camera/model changes apply after a pipeline restart.</div>
+</div>
+
+<div class="card"><h2>Patty &amp; griddle → target times</h2>
+  <div class="row"><div><label>Units</label><select id="units">
+    <option value="imperial">inches / °F</option><option value="metric">cm / °C</option></select></div>
+    <div></div></div>
+  <div class="row">
+    <div><label id="l_d">Diameter, in</label><input id="diameter" type="number" step="0.1"></div>
+    <div><label id="l_h">Thickness, in</label><input id="thickness" type="number" step="0.05"></div>
+  </div>
+  <div class="row">
+    <div><label id="l_g">Griddle, °F</label><input id="griddle" type="number" step="5"></div>
+    <div><label id="l_f">Freezer, °F</label><input id="freezer" type="number" step="1"></div>
+  </div>
+  <button class="ghost" id="calc">Suggest target times</button>
+  <div class="rec" id="rec"></div>
+  <div class="row">
+    <div><label>Target side A, s</label><input id="target_a" type="number"></div>
+    <div><label>Target side B, s</label><input id="target_b" type="number"></div>
+  </div>
+  <div class="row">
+    <div><label>Early tolerance, s</label><input id="tol_early" type="number"></div>
+    <div><label>Late tolerance, s</label><input id="tol_late" type="number"></div>
+  </div>
+  <button id="saveRec">Save targets</button>
+  <div class="note">⚠️ Suggestion is a v0 estimate for consistency, not food safety. Ground beef must reach 160°F / 71°C inside — verify with a thermometer.</div>
+</div>
+
+<div class="card"><h2>Shifts</h2>
+  <label>Cook (name or code — no full legal name needed)</label><input id="s_cook">
+  <label>Days of week</label>
+  <div id="s_days" class="days"></div>
+  <div class="row">
+    <div><label>From</label><input id="s_start" type="time"></div>
+    <div><label>To</label><input id="s_end" type="time"></div>
+  </div>
+  <button id="addShift">Add shift</button>
+  <table id="shifts"></table>
+</div>
+
+<div class="card" style="grid-column:1/-1"><h2>Events</h2>
+  <table id="events"></table>
+</div>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const CAM=['rtsp_url','model','imgsz','conf'];
+const NUMS=['target_a','target_b','tol_early','tol_late'];
+async function j(u,opt){const r=await fetch(u,opt);return r.json();}
+// ---- units ---------------------------------------------------------------
+const IN=2.54;
+const c2f=c=>c*9/5+32, f2c=f=>(f-32)*5/9;
+let U=localStorage.units||'imperial';
+let metric={diameter_cm:10,thickness_cm:1.2,griddle_c:190,freezer_c:-18};
+function paintUnits(){
+  const imp=U==='imperial';
+  $('units').value=U;
+  $('l_d').textContent='Diameter, '+(imp?'in':'cm');
+  $('l_h').textContent='Thickness, '+(imp?'in':'cm');
+  $('l_g').textContent='Griddle, '+(imp?'°F':'°C');
+  $('l_f').textContent='Freezer, '+(imp?'°F':'°C');
+  $('diameter').value=imp?+(metric.diameter_cm/IN).toFixed(2):metric.diameter_cm;
+  $('thickness').value=imp?+(metric.thickness_cm/IN).toFixed(2):metric.thickness_cm;
+  $('griddle').value=imp?Math.round(c2f(metric.griddle_c)):metric.griddle_c;
+  $('freezer').value=imp?Math.round(c2f(metric.freezer_c)):metric.freezer_c;
+}
+function readMetric(){
+  const imp=U==='imperial',v=id=>+$(id).value;
+  metric={diameter_cm:imp?+(v('diameter')*IN).toFixed(1):v('diameter'),
+          thickness_cm:imp?+(v('thickness')*IN).toFixed(2):v('thickness'),
+          griddle_c:imp?+f2c(v('griddle')).toFixed(0):v('griddle'),
+          freezer_c:imp?+f2c(v('freezer')).toFixed(0):v('freezer')};
+  return metric;
+}
+$('units').onchange=()=>{readMetric();U=$('units').value;localStorage.units=U;paintUnits();};
+// ---- settings ------------------------------------------------------------
+async function loadSettings(){const s=await j('/api/settings');
+  CAM.concat(NUMS).forEach(f=>{if($(f))$(f).value=s[f];});
+  metric={diameter_cm:s.diameter_cm,thickness_cm:s.thickness_cm,griddle_c:s.griddle_c,freezer_c:s.freezer_c};
+  paintUnits();}
+const post=(b)=>j('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+$('saveCam').onclick=()=>{const b={};CAM.forEach(f=>{const v=$(f).value;b[f]=isNaN(+v)||v===''?v:+v;});
+  post(b).then(()=>alert('Saved. Restart the pipeline to apply.'));};
+$('saveRec').onclick=()=>{const b={...readMetric()};NUMS.forEach(f=>b[f]=+$(f).value);
+  post(b).then(()=>alert('Targets saved (applied immediately).'));};
+$('calc').onclick=async()=>{const m=readMetric();
+  const r=await j(`/api/recommend?d=${m.diameter_cm}&h=${m.thickness_cm}&tg=${m.griddle_c}&tf=${m.freezer_c}`);
+  $('rec').innerHTML=`Suggested: <b>A ${r.side_a}s</b> · <b>B ${r.side_b}s</b> <button class="ghost" style="margin:0 0 0 8px;padding:3px 10px" onclick="applyRec(${r.side_a},${r.side_b})">apply</button><div class="note">${r.note}</div>`;};
+window.applyRec=(a,b)=>{$('target_a').value=a;$('target_b').value=b;};
+// ---- pipeline / status ---------------------------------------------------
+$('start').onclick=()=>j('/api/pipeline/start',{method:'POST'});
+$('stopb').onclick=()=>j('/api/pipeline/stop',{method:'POST'});
+async function refreshStatus(){const s=await j('/api/status');
+  const chips=[];
+  chips.push(`<span class="chip">state <b style="color:${s.running?'var(--ok)':'var(--bad)'}">${s.running?'running':'stopped'}</b></span>`);
+  if('agent_connected' in s)chips.push(`<span class="chip">edge <b style="color:${s.agent_connected?'var(--ok)':'var(--bad)'}">${s.agent_connected?'online':'offline'}</b></span>`);
+  if(s.running){chips.push(`<span class="chip">stream <b>${s.stream||'…'}</b></span>`,
+    `<span class="chip">camera <b>${s.source_fps||0}</b> fps</span>`,
+    `<span class="chip">processing <b>${s.processed_fps||0}</b> fps</span>`,
+    `<span class="chip">inference <b>${s.detect_ms||0}</b> ms</span>`);}
+  if(s.shift)chips.push(`<span class="chip">shift <b>${s.shift.cook}</b></span>`);
+  $('status').innerHTML=chips.join('');
+  $('preview').style.display=s.running?'block':'none';
+  if(s.running)$('preview').src='/preview.jpg?t='+Date.now();}
+// ---- shifts / events -----------------------------------------------------
+const DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+let selDays=new Set([0,1,2,3,4]);
+function paintDays(){$('s_days').innerHTML=DAYS.map((d,i)=>
+  `<span class="${selDays.has(i)?'on':''}" onclick="tglDay(${i})">${d}</span>`).join('');}
+window.tglDay=i=>{selDays.has(i)?selDays.delete(i):selDays.add(i);paintDays();};
+paintDays();
+async function refreshShifts(){const list=await j('/api/shifts');
+  $('shifts').innerHTML='<tr><th>cook</th><th>days</th><th>hours</th><th></th></tr>'+
+   list.map((s,i)=>`<tr><td>${s.cook}</td><td>${(s.days||[]).map(d=>DAYS[d]).join(', ')}</td><td>${s.start}–${s.end}</td>
+   <td><a href="#" onclick="delShift(${i});return false">✕</a></td></tr>`).join('');}
+window.delShift=i=>j('/api/shifts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({delete:i})}).then(refreshShifts);
+$('addShift').onclick=()=>{
+  if(!$('s_cook').value||!selDays.size||!$('s_start').value||!$('s_end').value)return alert('Fill cook, days and hours.');
+  j('/api/shifts',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({cook:$('s_cook').value,days:[...selDays],start:$('s_start').value,end:$('s_end').value})}).then(refreshShifts);};
+async function refreshEvents(){const evs=await j('/api/events?limit=50');
+  const names={placed:'🟢 placed',flip:'🔄 flip',removed:'⚪ removed'};
+  const grades={optimal:'<span class="g-optimal">✔ on time</span>',early:'<span class="g-early">⚠ early</span>',late:'<span class="g-late">⛔ late</span>'};
+  $('events').innerHTML='<tr><th>time</th><th>event</th><th>#</th><th>side</th><th>grade</th><th>A, s</th><th>B, s</th></tr>'+
+   evs.map(e=>`<tr><td>${new Date(e.ts*1000).toLocaleTimeString()}</td>
+    <td class="ev-${e.type}">${names[e.type]||e.type}</td><td>${e.pid}</td><td>${e.side}</td>
+    <td>${e.grade?grades[e.grade]:''}</td><td>${e.side_a}</td><td>${e.side_b}</td></tr>`).join('');}
+loadSettings();refreshShifts();refreshEvents();refreshStatus();
+setInterval(refreshStatus,1500);setInterval(refreshEvents,5000);
+</script></body></html>

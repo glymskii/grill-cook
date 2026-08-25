@@ -54,6 +54,7 @@ class TimerEngine:
         self.done: list[dict] = []
         self.next_pid = 1
         self.session = {"flips": 0, "optimal": 0, "early": 0, "late": 0, "streak": 0}
+        self.on_event = None                    # optional hook for the edge worker
 
     # ---- events -------------------------------------------------------------
     def _emit(self, kind: str, p: LivePatty, extra: dict | None = None):
@@ -65,6 +66,8 @@ class TimerEngine:
         EVENTS.parent.mkdir(parents=True, exist_ok=True)
         with EVENTS.open("a") as f:
             f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+        if self.on_event:
+            self.on_event(ev)
 
     def _grade_flip(self, side: str, elapsed: float) -> str:
         t = self.targets
