@@ -202,6 +202,8 @@ async def ws_agent(sock: WebSocket):
             agent_seen = time.time()
             if m["type"] == "state":
                 agent_state = m
+                if not m.get("running"):
+                    preview = None
             elif m["type"] == "preview":
                 preview = base64.b64decode(m["jpg"])
             elif m["type"] == "event":
@@ -221,6 +223,7 @@ async def ws_agent(sock: WebSocket):
     finally:
         if agent_ws is sock:
             agent_ws = None
+            preview = None
 
 
 # ---- browsers --------------------------------------------------------------

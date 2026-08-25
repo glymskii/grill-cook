@@ -39,7 +39,7 @@
 
 <div class="card"><h2>Pipeline</h2>
   <div class="status" id="status"><span class="chip">loading…</span></div>
-  <div class="row"><button id="start">▶ Start</button><button id="stopb" class="stop">■ Stop</button></div>
+  <button id="toggle" style="width:100%">▶ Start</button>
   <img id="preview" alt="">
   <div class="note">Preview refreshes once a second while the pipeline is running.</div>
 </div>
@@ -146,13 +146,20 @@ $('calc').onclick=async()=>{const m=readMetric();
   $('rec').innerHTML=`Suggested: <b>A ${r.side_a}s</b> · <b>B ${r.side_b}s</b> <button class="ghost" style="margin:0 0 0 8px;padding:3px 10px" onclick="applyRec(${r.side_a},${r.side_b})">apply</button><div class="note">${r.note}</div>`;};
 window.applyRec=(a,b)=>{$('target_a').value=a;$('target_b').value=b;};
 // ---- pipeline / status ---------------------------------------------------
-$('start').onclick=()=>j('/api/pipeline/start',{method:'POST'});
-$('stopb').onclick=()=>j('/api/pipeline/stop',{method:'POST'});
+let running=false;
+$('toggle').onclick=async()=>{$('toggle').disabled=true;
+  await j('/api/pipeline/'+(running?'stop':'start'),{method:'POST'});
+  setTimeout(()=>{$('toggle').disabled=false;refreshStatus();},600);};
+function paintToggle(){const b=$('toggle');
+  b.textContent=running?'■ Stop':'▶ Start';
+  b.className=running?'stop':'';}
+const STREAM={ok:'live',"no stream":'waiting for camera…',reconnecting:'reconnecting…'};
 async function refreshStatus(){const s=await j('/api/status');
+  running=!!s.running;paintToggle();
   const chips=[];
   chips.push(`<span class="chip">state <b style="color:${s.running?'var(--ok)':'var(--bad)'}">${s.running?'running':'stopped'}</b></span>`);
   if('agent_connected' in s)chips.push(`<span class="chip">edge <b style="color:${s.agent_connected?'var(--ok)':'var(--bad)'}">${s.agent_connected?'online':'offline'}</b></span>`);
-  if(s.running){chips.push(`<span class="chip">stream <b>${s.stream||'…'}</b></span>`,
+  if(s.running){chips.push(`<span class="chip">stream <b>${STREAM[s.stream]||s.stream||'…'}</b></span>`,
     `<span class="chip">camera <b>${s.source_fps||0}</b> fps</span>`,
     `<span class="chip">processing <b>${s.processed_fps||0}</b> fps</span>`,
     `<span class="chip">inference <b>${s.detect_ms||0}</b> ms</span>`);}

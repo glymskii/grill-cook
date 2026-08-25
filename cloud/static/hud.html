@@ -72,7 +72,7 @@ function connect(){
       toast('📷 View changed — tracking reset','#5b6b7b');beepMark={};}
     state=m;
     document.getElementById('sdot').className='dot '+(m.running&&m.stream==='ok'?'ok':'');
-    document.getElementById('sname').textContent=!m.running?'pipeline stopped':(m.stream==='ok'?'live':m.stream);
+    document.getElementById('sname').textContent=!m.running?'pipeline stopped':(m.stream==='ok'?'live':(m.stream==='no stream'?'waiting for camera…':m.stream));
     document.getElementById('shift').textContent=m.shift?('👨‍🍳 '+m.shift.cook):'no shift';
     document.getElementById('ncook').textContent=(m.patties||[]).length;
     document.getElementById('ndone').textContent=m.done||0;
@@ -101,7 +101,7 @@ function draw(){
   requestAnimationFrame(draw);
   ctx.clearRect(0,0,W,H);
   const [fw,fh]=frameWH,s=Math.min(W/fw,H/fh),ox=(W-fw*s)/2,oy=(H-fh*s)/2;
-  if(bgOk&&showBg){ctx.globalAlpha=0.35;ctx.drawImage(bg,ox,oy,fw*s,fh*s);ctx.globalAlpha=1;}
+  if(bgOk&&showBg&&state.running&&state.stream==='ok'){ctx.globalAlpha=0.35;ctx.drawImage(bg,ox,oy,fw*s,fh*s);ctx.globalAlpha=1;}
   ctx.strokeStyle='#233040';ctx.strokeRect(ox,oy,fw*s,fh*s);
   const now=Date.now()/1000+offset;
   let anyOver=false;
