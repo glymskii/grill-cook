@@ -41,9 +41,12 @@ const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
 let W=0,H=0,frameWH=[1080,1920],showBg=true,sound=false,audio=null;
 let state={patties:[],running:false},offset=0,haveOffset=false,lastMsg=0;
 let streak=0,optimal=0,flips=0;
-const bg=new Image();let bgOk=false;
-bg.onload=()=>bgOk=true; bg.onerror=()=>bgOk=false;
-setInterval(()=>{if(showBg)bg.src='/preview.jpg?t='+Date.now();},1000);
+let bg=new Image(),bgOk=false;
+// double-buffered: swap only after the next frame fully decodes, so a slow
+// network never blanks the background between refreshes
+setInterval(()=>{if(!showBg)return;const im=new Image();
+  im.onload=()=>{bg=im;bgOk=true;};
+  im.src='/preview.jpg?t='+Date.now();},500);
 document.getElementById('bgbtn').onclick=()=>{showBg=!showBg;bgOk=bgOk&&showBg;};
 document.getElementById('sndbtn').onclick=()=>{
   if(!audio)audio=new (window.AudioContext||window.webkitAudioContext)();

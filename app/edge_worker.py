@@ -85,7 +85,7 @@ class Worker:
                             await ws.send(json.dumps(
                                 {"type": "event", "event": self.pending_events.pop(0)}))
                         await ws.send(json.dumps(msg))
-                    if running and now - last["prev"] >= 1.0 and self.pipe.jpeg:
+                    if running and now - last["prev"] >= 0.5 and self.pipe.jpeg:
                         last["prev"] = now
                         await ws.send(json.dumps(
                             {"type": "preview",
