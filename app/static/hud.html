@@ -39,7 +39,7 @@
 <script>
 const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
 let W=0,H=0,frameWH=[1080,1920],showBg=true,sound=false,audio=null;
-let state={patties:[],running:false},offset=0,haveOffset=false,lastMsg=0;
+let state={patties:[],running:false},offset=0,haveOffset=false,lastMsg=0,lastCut=0;
 let streak=0,optimal=0,flips=0;
 let bg=new Image(),bgOk=false;
 // double-buffered: swap only after the next frame fully decodes, so a slow
@@ -68,6 +68,8 @@ function connect(){
     if(m.frame_wh&&m.frame_wh[0])frameWH=m.frame_wh;
     (m.patties||[]).forEach(p=>{if(p.feedback)onFeedback(p);});
     if(m.session){streak=m.session.streak;optimal=m.session.optimal;flips=m.session.flips;}
+    if(m.scene_cut_ts&&m.scene_cut_ts!==lastCut){lastCut=m.scene_cut_ts;
+      toast('📷 View changed — tracking reset','#5b6b7b');beepMark={};}
     state=m;
     document.getElementById('sdot').className='dot '+(m.running&&m.stream==='ok'?'ok':'');
     document.getElementById('sname').textContent=!m.running?'pipeline stopped':(m.stream==='ok'?'live':m.stream);

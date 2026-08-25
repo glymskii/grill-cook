@@ -207,11 +207,14 @@ async def ws_agent(sock: WebSocket):
             elif m["type"] == "event":
                 events.append(m["event"])
             elif m["type"] == "restore":
+                global desired_run
                 if not settings_touched and m.get("settings"):
                     settings.update(m["settings"])
                     settings_touched = True
                 if not shifts and m.get("shifts"):
                     shifts.extend(m["shifts"])
+                if m.get("run"):
+                    desired_run = True       # the kitchen was live — stay live
                 await push_config()
     except WebSocketDisconnect:
         pass

@@ -66,7 +66,8 @@ class Worker:
             hello = json.loads(await ws.recv())
             if not hello.get("have_settings") and self.cached().get("settings"):
                 await ws.send(json.dumps({"type": "restore", **self.cached()}))
-                print("hub state restored from local cache")
+                print("hub state restored from local cache (run=%s)"
+                      % self.cached().get("run"))
             last = {"snap": 0.0, "prev": 0.0}
 
             async def sender():
@@ -98,8 +99,7 @@ class Worker:
                     m = json.loads(raw)
                     if m["type"] == "config":
                         self.apply(m["settings"], m["run"])
-                        if "shifts" in m:
-                            self.cache({"shifts": m["shifts"]})
+                        self.cache({"run": m["run"], "shifts": m.get("shifts", [])})
             finally:
                 send_task.cancel()
 

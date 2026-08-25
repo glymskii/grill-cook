@@ -55,19 +55,41 @@ class TimerEngine:
         self.next_pid = 1
         self.session = {"flips": 0, "optimal": 0, "early": 0, "late": 0, "streak": 0}
         self.on_event = None                    # optional hook for the edge worker
+        self.freeze_until = 0.0                 # settle window after a scene cut
+        self.scene_cut_ts = 0.0
 
     # ---- events -------------------------------------------------------------
+    def _emit_raw(self, ev: dict):
+        EVENTS.parent.mkdir(parents=True, exist_ok=True)
+        with EVENTS.open("a") as f:
+            f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+        if self.on_event:
+            self.on_event(ev)
+
     def _emit(self, kind: str, p: LivePatty, extra: dict | None = None):
         ev = {"ts": round(time.time(), 2), "type": kind, "pid": p.pid,
               "side": p.side, "flips": p.flips,
               "side_a": round(p.side_time["A"], 1), "side_b": round(p.side_time["B"], 1)}
         if extra:
             ev.update(extra)
-        EVENTS.parent.mkdir(parents=True, exist_ok=True)
-        with EVENTS.open("a") as f:
-            f.write(json.dumps(ev, ensure_ascii=False) + "\n")
-        if self.on_event:
-            self.on_event(ev)
+        self._emit_raw(ev)
+
+    def scene_reset(self, now: float):
+        """The view changed globally: positional identity is void. Archive the
+        current patties as invalidated (their timers must not enter analytics
+        as completed cooks) and hold off new tracks while the scene settles."""
+        for p in self.alive.values():
+            if p.missing_since is None:
+                p.side_time[p.side] += now - p.side_started
+            else:
+                p.side_time[p.side] += p.missing_since - p.side_started
+            self._emit("invalidated", p)
+        n = len(self.alive)
+        self.alive.clear()
+        self.freeze_until = now + 1.2
+        self.scene_cut_ts = now
+        self._emit_raw({"ts": round(time.time(), 2), "type": "scene_cut",
+                        "n_dropped": n})
 
     def _grade_flip(self, side: str, elapsed: float) -> str:
         t = self.targets
@@ -80,6 +102,8 @@ class TimerEngine:
     # ---- per-frame update ---------------------------------------------------
     def update(self, dets: list[tuple[float, float, float]], now: float):
         """dets: (cx, cy, r) in normalized [0..1] coords, r = radius/frame_w."""
+        if now < self.freeze_until:
+            return
         used = set()
         # associate greedily: nearest detection within assoc_frac * diameter
         for p in sorted(self.alive.values(), key=lambda q: q.placed_ts):
@@ -168,4 +192,5 @@ class TimerEngine:
                 "missing": p.missing_since is not None,
                 "feedback": fb,
             })
-        return {"patties": out, "session": dict(self.session), "done": len(self.done)}
+        return {"patties": out, "session": dict(self.session), "done": len(self.done),
+                "scene_cut_ts": round(self.scene_cut_ts, 2)}

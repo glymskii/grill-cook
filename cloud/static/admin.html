@@ -177,11 +177,11 @@ $('addShift').onclick=()=>{
   j('/api/shifts',{method:'POST',headers:{'Content-Type':'application/json'},
    body:JSON.stringify({cook:$('s_cook').value,days:[...selDays],start:$('s_start').value,end:$('s_end').value})}).then(refreshShifts);};
 async function refreshEvents(){const evs=await j('/api/events?limit=50');
-  const names={placed:'🟢 placed',flip:'🔄 flip',removed:'⚪ removed'};
+  const names={placed:'🟢 placed',flip:'🔄 flip',removed:'⚪ removed',scene_cut:'🎬 scene change',invalidated:'✂️ invalidated'};
   const grades={optimal:'<span class="g-optimal">✔ on time</span>',early:'<span class="g-early">⚠ early</span>',late:'<span class="g-late">⛔ late</span>'};
   $('events').innerHTML='<tr><th>time</th><th>event</th><th>#</th><th>side</th><th>grade</th><th>A, s</th><th>B, s</th></tr>'+
    evs.map(e=>`<tr><td>${new Date(e.ts*1000).toLocaleTimeString()}</td>
-    <td class="ev-${e.type}">${names[e.type]||e.type}</td><td>${e.pid}</td><td>${e.side}</td>
+    <td class="ev-${e.type}">${names[e.type]||e.type}</td><td>${e.pid??''}</td><td>${e.side}</td>
     <td>${e.grade?grades[e.grade]:''}</td><td>${e.side_a}</td><td>${e.side_b}</td></tr>`).join('');}
 loadSettings();refreshShifts();refreshEvents();refreshStatus();
 setInterval(refreshStatus,1500);setInterval(refreshEvents,5000);
