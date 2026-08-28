@@ -50,6 +50,8 @@ class Worker:
                 "A": settings["target_a"], "B": settings["target_b"],
                 "tol_early": settings["tol_early"], "tol_late": settings["tol_late"]})
         running = self.pipe and self.pipe.is_alive()
+        if running:
+            self.pipe.s = settings         # ROI/targets apply live, no restart
         if run and not running:
             self.engine = TimerEngine({"A": settings["target_a"], "B": settings["target_b"],
                                        "tol_early": settings["tol_early"],

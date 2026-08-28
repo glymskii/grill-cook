@@ -28,6 +28,7 @@ DEFAULTS = {
     "rtsp_url": "", "model": "finetuned", "imgsz": 960, "conf": 0.25,
     "diameter_cm": 10.0, "thickness_cm": 1.2, "griddle_c": 190.0, "freezer_c": -18.0,
     "target_a": 180, "target_b": 150, "tol_early": 15, "tol_late": 15,
+    "roi": [],
 }
 
 settings = dict(DEFAULTS)
@@ -39,6 +40,7 @@ agent_ws: WebSocket | None = None
 agent_state: dict = {}
 agent_seen = 0.0
 preview: bytes | None = None
+still: bytes | None = None       # survives pipeline stops: the ROI editor needs a frame
 
 app = FastAPI()
 
@@ -104,6 +106,14 @@ def admin_page():
 @app.get("/hud")
 def hud_page():
     return FileResponse(ROOT / "static/hud.html")
+
+
+@app.get("/still.jpg")
+def still_jpg():
+    if still:
+        return Response(still, media_type="image/jpeg",
+                        headers={"Cache-Control": "no-store"})
+    return Response(status_code=404)
 
 
 @app.get("/preview.jpg")
@@ -272,7 +282,7 @@ def get_events(limit: int = 100):
 # ---- agent link ------------------------------------------------------------
 @app.websocket("/ws/agent")
 async def ws_agent(sock: WebSocket):
-    global agent_ws, agent_state, agent_seen, preview, settings, shifts, settings_touched
+    global agent_ws, agent_state, agent_seen, preview, still, settings, shifts, settings_touched
     if sock.headers.get("x-agent-token") != AGENT_TOKEN:
         await sock.close(code=4403)
         return
@@ -299,6 +309,7 @@ async def ws_agent(sock: WebSocket):
                     preview = None
             elif m["type"] == "preview":
                 preview = base64.b64decode(m["jpg"])
+                still = preview
             elif m["type"] == "event":
                 events.append(m["event"])
             elif m["type"] == "backfill":

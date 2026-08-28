@@ -54,8 +54,15 @@
 <div class="card"><h2>Pipeline</h2>
   <div class="status" id="status"><span class="chip">loading…</span></div>
   <button id="toggle" style="width:100%">▶ Start</button>
-  <img id="preview" alt="">
-  <div class="note">Preview refreshes once a second while the pipeline is running.</div>
+  <div style="position:relative"><img id="preview" alt="">
+    <canvas id="roiCv" style="position:absolute;left:0;top:0;cursor:crosshair;display:none"></canvas></div>
+  <div class="row">
+    <button class="ghost" id="roiEdit">✏️ Edit grill zone</button>
+    <button id="roiSave" style="display:none">💾 Save zone</button>
+    <button class="ghost" id="roiClear" style="display:none">🗑 Remove zone</button>
+  </div>
+  <div class="note">Timers run only inside the zone — the pass tray and prep boards stay silent.
+    Preview refreshes once a second while the pipeline is running.</div>
 </div>
 
 <div class="card"><h2>Camera &amp; model</h2>
@@ -179,8 +186,37 @@ async function refreshStatus(){const s=await j('/api/status');
     `<span class="chip">inference <b>${s.detect_ms||0}</b> ms</span>`);}
   if(s.shift)chips.push(`<span class="chip">shift <b>${s.shift.cook}</b></span>`);
   $('status').innerHTML=chips.join('');
-  $('preview').style.display=s.running?'block':'none';
-  if(s.running)$('preview').src='/preview.jpg?t='+Date.now();}
+  $('preview').style.display=(s.running||roiMode)?'block':'none';
+  if(s.running&&!roiMode)$('preview').src='/preview.jpg?t='+Date.now();}
+// ---- grill zone (ROI) editor ---------------------------------------------
+let roiMode=false,roiPts=[];
+const cv=$('roiCv');
+function roiDraw(){const img=$('preview'),w=img.clientWidth,h=img.clientHeight;
+  if(!w)return;cv.width=w;cv.height=h;const g=cv.getContext('2d');
+  g.clearRect(0,0,w,h);if(!roiPts.length)return;
+  g.beginPath();roiPts.forEach((p,i)=>g[i?'lineTo':'moveTo'](p[0]*w,p[1]*h));
+  if(roiPts.length>2)g.closePath();
+  g.fillStyle='rgba(80,220,90,0.15)';g.fill();
+  g.strokeStyle='#50dc5a';g.lineWidth=2;g.stroke();
+  g.fillStyle='#50dc5a';roiPts.forEach(p=>{g.beginPath();g.arc(p[0]*w,p[1]*h,4,0,7);g.fill();});}
+$('roiEdit').onclick=async()=>{
+  roiMode=!roiMode;
+  $('roiEdit').textContent=roiMode?'✕ Cancel':'✏️ Edit grill zone';
+  $('roiSave').style.display=roiMode?'':'none';
+  $('roiClear').style.display=roiMode?'':'none';
+  cv.style.display=roiMode?'block':'none';
+  if(roiMode){const st=await j('/api/settings');roiPts=(st.roi||[]).slice();
+    $('preview').style.display='block';
+    $('preview').src='/still.jpg?t='+Date.now();
+    $('preview').onload=roiDraw;setTimeout(roiDraw,300);}
+};
+cv.onclick=e=>{if(!roiMode)return;const r=cv.getBoundingClientRect();
+  roiPts.push([+( (e.clientX-r.left)/r.width ).toFixed(4),+(((e.clientY-r.top))/r.height).toFixed(4)]);
+  roiDraw();};
+$('roiSave').onclick=async()=>{
+  if(roiPts.length&&roiPts.length<3)return alert('A zone needs at least 3 points.');
+  await post({roi:roiPts});$('roiEdit').onclick();alert('Zone saved — applies live.');};
+$('roiClear').onclick=()=>{roiPts=[];roiDraw();};
 // ---- shifts / events -----------------------------------------------------
 const DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 let selDays=new Set([0,1,2,3,4]);

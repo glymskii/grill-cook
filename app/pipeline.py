@@ -15,6 +15,18 @@ ROOT = Path(__file__).resolve().parent.parent
 BEST = ROOT / "runs/detect/runs/detect/patty_v2/weights/best.pt"
 
 
+def in_poly(x: float, y: float, poly) -> bool:
+    """Ray-cast point-in-polygon over normalized vertices."""
+    inside = False
+    n = len(poly)
+    for i in range(n):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % n]
+        if (y1 > y) != (y2 > y) and x < (x2 - x1) * (y - y1) / (y2 - y1) + x1:
+            inside = not inside
+    return inside
+
+
 class Pipeline(threading.Thread):
     def __init__(self, settings: dict, engine):
         super().__init__(daemon=True)
@@ -136,6 +148,11 @@ class Pipeline(threading.Thread):
                         continue
                     dets.append((((x1 + x2) / 2) / fw, ((y1 + y2) / 2) / fh,
                                  (w + h) / 4 / fw, round(cf, 3)))
+            roi = self.s.get("roi") or []
+            if len(roi) >= 3:
+                # timers exist only inside the work zone: the pass tray and
+                # prep boards may hold patties, but nobody cooks there
+                dets = [d for d in dets if in_poly(d[0], d[1], roi)]
             with self.engine_lock:
                 self.engine.update(dets, t2)
             self._out_stamps.append(t2)
@@ -150,6 +167,10 @@ class Pipeline(threading.Thread):
             if t2 - last_jpeg > 0.5:
                 last_jpeg = t2
                 vis = r.plot(line_width=2)
+                if len(roi) >= 3:
+                    pts = np.array([[int(px * fw), int(py * fh)] for px, py in roi],
+                                   dtype=np.int32)
+                    cv2.polylines(vis, [pts], True, (80, 220, 90), 2)
                 scale = 640 / max(fw, fh)
                 vis = cv2.resize(vis, (int(fw * scale), int(fh * scale)))
                 okj, buf = cv2.imencode(".jpg", vis, [cv2.IMWRITE_JPEG_QUALITY, 70])
