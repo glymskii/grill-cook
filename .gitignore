@@ -11,3 +11,4 @@ app/state/
 app/mediamtx.yml
 .vercel/
 out/
+!data/*.yaml

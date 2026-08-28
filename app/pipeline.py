@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
-BEST = ROOT / "runs/detect/runs/patty_v1/weights/best.pt"
+BEST = ROOT / "runs/detect/runs/detect/patty_v2/weights/best.pt"
 
 
 class Pipeline(threading.Thread):
