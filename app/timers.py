@@ -60,6 +60,7 @@ class TimerEngine:
         self.on_event = None                    # optional hook for the edge worker
         self.freeze_until = 0.0                 # settle window after a scene cut
         self.scene_cut_ts = 0.0
+        self.match_stat = (0, 0)                # (matched alive, total alive) per frame
 
     # ---- events -------------------------------------------------------------
     def _emit_raw(self, ev: dict):
@@ -111,6 +112,7 @@ class TimerEngine:
             return
         dets = [(d + (1.0,))[:4] for d in dets]
         used = set()
+        matched = 0
         # associate greedily: nearest detection within assoc_frac * diameter
         for p in sorted(self.alive.values(), key=lambda q: q.placed_ts):
             best, best_d = None, 1e9
@@ -122,6 +124,7 @@ class TimerEngine:
                     best, best_d = i, d
             if best is not None and best_d <= self.assoc_frac * 2 * p.r:
                 used.add(best)
+                matched += 1
                 cx, cy, r, _cf = dets[best]
                 p.cx = 0.7 * p.cx + 0.3 * cx
                 p.cy = 0.7 * p.cy + 0.3 * cy
@@ -156,6 +159,8 @@ class TimerEngine:
             else:
                 if p.missing_since is None:
                     p.missing_since = now
+
+        self.match_stat = (matched, len(self.alive))
 
         # unmatched detections become new patties — but only confident ones;
         # a flickering low-conf blob may extend a track, never found one

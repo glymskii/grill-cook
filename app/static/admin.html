@@ -183,7 +183,8 @@ async function refreshStatus(){const s=await j('/api/status');
   if(s.running){chips.push(`<span class="chip">stream <b>${STREAM[s.stream]||s.stream||'…'}</b></span>`,
     `<span class="chip">camera <b>${s.source_fps||0}</b> fps</span>`,
     `<span class="chip">processing <b>${s.processed_fps||0}</b> fps</span>`,
-    `<span class="chip">inference <b>${s.detect_ms||0}</b> ms</span>`);}
+    `<span class="chip">inference <b>${s.detect_ms||0}</b> ms</span>`);
+    if(s.outside_roi)chips.push(`<span class="chip" style="border-color:var(--warn)">⚠ outside zone <b style="color:var(--warn)">${s.outside_roi}</b></span>`);}
   if(s.shift)chips.push(`<span class="chip">shift <b>${s.shift.cook}</b></span>`);
   $('status').innerHTML=chips.join('');
   $('preview').style.display=(s.running||roiMode)?'block':'none';

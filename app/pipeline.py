@@ -107,6 +107,8 @@ class Pipeline(threading.Thread):
         prev_small = None
         last_cut = 0.0
         band_ema = 0.0     # rolling noise floor of the trigger statistic
+        pending_cut = None # candidate awaiting association evidence
+        probe = []
         while not self.stop_flag.is_set():
             with self.lock:
                 item, self.latest = self.latest, None
@@ -116,26 +118,43 @@ class Pipeline(threading.Thread):
             frame, t_arr = item
             t1 = time.time()
             small = cv2.cvtColor(cv2.resize(frame, (96, 54)),
-                                 cv2.COLOR_BGR2GRAY).astype(np.int16)
+                                 cv2.COLOR_BGR2GRAY).astype(np.float32)
+            small -= float(small.mean())   # auto-exposure steps vanish here
             cut = False
             if prev_small is not None:
                 d = np.abs(small - prev_small)
                 # 3rd-highest band mean == "at least 3 of 4 bands this hot".
                 # Threshold adapts to the stream's own noise floor: a real fixed
-                # camera sits near 0.2 and keeps the absolute 9.0; synthetic or
+                # camera sits near 0.2 and keeps the absolute floor; synthetic or
                 # vibrating footage raises the floor instead of spamming cuts.
                 stat = sorted(float(d[sl].mean()) for sl in bands.values())[1]
-                cut = stat > max(9.0, band_ema * 5.0)
+                cut = stat > max(8.0, band_ema * 5.0)
                 if not cut:
                     band_ema = 0.95 * band_ema + 0.05 * stat
             prev_small = small
             r = model.track(frame, **common)[0]
             t2 = time.time()
-            if cut and t2 - last_cut > 3.0:
-                last_cut = t2
-                self.status["scene_cuts"] += 1
-                with self.engine_lock:
-                    self.engine.scene_reset(t2)
+            # a band spike alone is a CANDIDATE: the cook leaning in or an
+            # exposure step also lights the borders. Only a real view change
+            # breaks track association — so demand that evidence first.
+            if cut and pending_cut is None and t2 - last_cut > 3.0:
+                pending_cut = t2
+                probe = []
+                self.status["scene_candidates"] = self.status.get("scene_candidates", 0) + 1
+            if pending_cut is not None:
+                if t2 - pending_cut > 0.3:
+                    with self.engine_lock:
+                        m, a = self.engine.match_stat
+                    probe.append(m / a if a else 1.0)
+                if t2 - pending_cut > 1.5:
+                    broke = probe and sum(probe) / len(probe) < 0.4
+                    with self.engine_lock:
+                        has_alive = bool(self.engine.alive)
+                        if broke and has_alive:
+                            last_cut = t2
+                            self.status["scene_cuts"] += 1
+                            self.engine.scene_reset(t2)
+                    pending_cut = None
             fw, fh = frame.shape[1], frame.shape[0]
             dets = []
             if r.boxes is not None:
@@ -152,7 +171,11 @@ class Pipeline(threading.Thread):
             if len(roi) >= 3:
                 # timers exist only inside the work zone: the pass tray and
                 # prep boards may hold patties, but nobody cooks there
-                dets = [d for d in dets if in_poly(d[0], d[1], roi)]
+                kept = [d for d in dets if in_poly(d[0], d[1], roi)]
+                self.status["outside_roi"] = len(dets) - len(kept)
+                dets = kept
+            else:
+                self.status["outside_roi"] = 0
             with self.engine_lock:
                 self.engine.update(dets, t2)
             self._out_stamps.append(t2)
