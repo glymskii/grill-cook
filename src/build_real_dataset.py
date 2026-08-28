@@ -23,8 +23,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent))
 from config import Config
 
-VIDEOS = [("data/IMG_4138.mp4", 1.0), ("data/IMG_4139.mp4", 0.7)]
-GAP_TOL_S = 45.0          # a slot may go undetected this long before we stop trusting it
+VIDEOS = [("data/IMG_6635.mov", 1.8), ("data/IMG_6637.mov", 0.7)]
+GAP_TOL_S = 18.0          # long bridges glue removed->new placements into phantoms
 TRAIN_FRAC = 0.7
 
 
@@ -64,12 +64,19 @@ def collect(path, step, cfg, ft, world):
             break
         fh, fw = frame.shape[:2]
         boxes = []
-        for model, conf in ((ft, 0.30), (world, cfg.conf)):
-            r = model.predict(frame, conf=conf, iou=cfg.iou, imgsz=960,
+        # third teacher: the far strip up-scaled. Perspective shrinks and
+        # flattens distant patties below what full-frame passes can see.
+        cx0, cy0 = int(0.35 * fw), 0
+        crop = frame[0:int(0.60 * fh), cx0:fw]
+        passes = [(ft, 0.10, frame, 0, 0), (world, cfg.conf, frame, 0, 0),
+                  (world, cfg.conf, crop, cx0, cy0)]
+        for model, conf, img, ox, oy in passes:
+            r = model.predict(img, conf=conf, iou=cfg.iou, imgsz=960,
                               device=cfg.device, agnostic_nms=True, verbose=False)[0]
             if r.boxes is None:
                 continue
-            for x1, y1, x2, y2 in r.boxes.xyxy.tolist():
+            for bx1, by1, bx2, by2 in r.boxes.xyxy.tolist():
+                x1, y1, x2, y2 = bx1 + ox, by1 + oy, bx2 + ox, by2 + oy
                 w, h = x2 - x1, y2 - y1
                 if w < 8 or h < 8 or max(w / h, h / w) > cfg.max_aspect:
                     continue
@@ -89,8 +96,8 @@ def collect(path, step, cfg, ft, world):
         frames.append((t, frame))
         t += step
     cap.release()
-    # a slot confirmed by fewer than 4 detections is noise, not a patty
-    slots = [s for s in slots if len(s.dets) >= 4]
+    # stationary patties collect dozens of confirmations; noise clusters don't
+    slots = [s for s in slots if len(s.dets) >= 8]
     return frames, slots
 
 
@@ -107,7 +114,7 @@ def main():
 
     cfg = Config()
     from ultralytics import YOLO, YOLOWorld
-    ft = YOLO("runs/detect/runs/patty_v1/weights/best.pt")
+    ft = YOLO("runs/detect/runs/detect/patty_v5/weights/best.pt")
     world = YOLOWorld(cfg.model_name)
     world.set_classes(list(cfg.classes))
 

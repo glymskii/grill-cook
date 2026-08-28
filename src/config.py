@@ -18,7 +18,7 @@ class Config:
     tracker: str = "src/bytetrack_patty.yaml"
     min_size_frac: float = 0.07   # bbox bigger side vs frame bigger side
     max_size_frac: float = 0.38   # rejects group/whole-pan boxes
-    max_aspect: float = 1.8       # patties are roughly round
+    max_aspect: float = 2.6       # perspective flattens far patties into ellipses
 
     # --- scene cuts (jump cuts in edited video) ---
     # measured on the frame border band (outside pan ROI) — static background
