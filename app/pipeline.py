@@ -41,9 +41,10 @@ class Pipeline(threading.Thread):
             from ultralytics import YOLOWorld
             m = YOLOWorld(cfg.model_name)
             m.set_classes(list(cfg.classes))
-            return m, cfg, cfg.conf
+            return m, cfg, cfg.conf, cfg.conf
         from ultralytics import YOLO
-        return YOLO(str(BEST)), cfg, float(self.s.get("conf", 0.25))
+        birth = float(self.s.get("conf", 0.30))
+        return YOLO(str(BEST)), cfg, min(0.15, birth), birth
 
     # ---- reader -------------------------------------------------------------
     def _reader(self):
@@ -76,7 +77,8 @@ class Pipeline(threading.Thread):
 
     # ---- worker -------------------------------------------------------------
     def run(self):
-        model, cfg, conf = self._load_model()
+        model, cfg, conf, birth = self._load_model()
+        self.engine.birth_conf = birth
         reader = threading.Thread(target=self._reader, daemon=True)
         reader.start()
         common = dict(conf=conf, iou=cfg.iou, imgsz=int(self.s.get("imgsz", 960)),
@@ -125,14 +127,15 @@ class Pipeline(threading.Thread):
             fw, fh = frame.shape[1], frame.shape[0]
             dets = []
             if r.boxes is not None:
-                for x1, y1, x2, y2 in r.boxes.xyxy.tolist():
+                for (x1, y1, x2, y2), cf in zip(r.boxes.xyxy.tolist(),
+                                                r.boxes.conf.tolist()):
                     w, h = x2 - x1, y2 - y1
                     if w < 8 or h < 8 or max(w / h, h / w) > cfg.max_aspect:
                         continue
                     if max(w, h) / max(fw, fh) > cfg.max_size_frac:
                         continue
                     dets.append((((x1 + x2) / 2) / fw, ((y1 + y2) / 2) / fh,
-                                 (w + h) / 4 / fw))
+                                 (w + h) / 4 / fw, round(cf, 3)))
             with self.engine_lock:
                 self.engine.update(dets, t2)
             self._out_stamps.append(t2)

@@ -42,14 +42,17 @@ class LivePatty:
 
 
 class TimerEngine:
-    def __init__(self, targets: dict, flip_gap_min=0.4, removed_after=6.0,
-                 flip_cooldown=8.0, min_side_before_flip=5.0, assoc_frac=1.6):
+    def __init__(self, targets: dict, flip_gap_min=0.4, removed_after=9.0,
+                 flip_cooldown=8.0, min_side_before_flip=5.0, assoc_frac=1.6,
+                 birth_conf=0.30):
         self.targets = targets                  # {"A": s, "B": s, "tol_early": s, "tol_late": s}
         self.flip_gap_min = flip_gap_min
         self.removed_after = removed_after
         self.flip_cooldown = flip_cooldown
         self.min_side = min_side_before_flip
         self.assoc_frac = assoc_frac
+        self.birth_conf = birth_conf   # hysteresis: new tracks need this much,
+                                       # existing ones survive on far less
         self.alive: dict[int, LivePatty] = {}
         self.done: list[dict] = []
         self.next_pid = 1
@@ -103,14 +106,15 @@ class TimerEngine:
 
     # ---- per-frame update ---------------------------------------------------
     def update(self, dets: list[tuple[float, float, float]], now: float):
-        """dets: (cx, cy, r) in normalized [0..1] coords, r = radius/frame_w."""
+        """dets: (cx, cy, r[, conf]) in normalized coords, r = radius/frame_w."""
         if now < self.freeze_until:
             return
+        dets = [(d + (1.0,))[:4] for d in dets]
         used = set()
         # associate greedily: nearest detection within assoc_frac * diameter
         for p in sorted(self.alive.values(), key=lambda q: q.placed_ts):
             best, best_d = None, 1e9
-            for i, (cx, cy, r) in enumerate(dets):
+            for i, (cx, cy, r, _cf) in enumerate(dets):
                 if i in used:
                     continue
                 d = math.hypot(cx - p.cx, cy - p.cy)
@@ -118,7 +122,7 @@ class TimerEngine:
                     best, best_d = i, d
             if best is not None and best_d <= self.assoc_frac * 2 * p.r:
                 used.add(best)
-                cx, cy, r = dets[best]
+                cx, cy, r, _cf = dets[best]
                 p.cx = 0.7 * p.cx + 0.3 * cx
                 p.cy = 0.7 * p.cy + 0.3 * cy
                 p.r = 0.8 * p.r + 0.2 * r
@@ -153,9 +157,10 @@ class TimerEngine:
                 if p.missing_since is None:
                     p.missing_since = now
 
-        # unmatched detections become new patties
-        for i, (cx, cy, r) in enumerate(dets):
-            if i in used:
+        # unmatched detections become new patties — but only confident ones;
+        # a flickering low-conf blob may extend a track, never found one
+        for i, (cx, cy, r, cf) in enumerate(dets):
+            if i in used or cf < self.birth_conf:
                 continue
             # ignore rebirth right on top of an existing patty
             if any(math.hypot(cx - q.cx, cy - q.cy) < 1.2 * q.r for q in self.alive.values()):
