@@ -1,0 +1,646 @@
+<title>Экономика одной плиты</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Oswald:wght@400;500;600&display=swap">
+<style>
+:root{
+  --bg:#e9edee; --surface:#fdfdfd; --surface-2:#f2f5f6; --line:#d0d9dc; --line-2:#e0e7e9;
+  --ink:#0f1518; --ink-2:#3b4a50; --muted:#65777d;
+  --accent:#c9451a; --accent-ink:#a3360f; --accent-wash:#f8ebe6;
+  --s1:#c9451a; --s2:#0d6e9e; --s3:#9a7d24;
+  --good:#2c7355; --good-wash:#e6f0eb;
+  --shadow:0 1px 2px rgba(15,21,24,.06), 0 8px 24px -14px rgba(15,21,24,.28);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0c1113; --surface:#151b1e; --surface-2:#1b2327; --line:#273237; --line-2:#202a2e;
+    --ink:#e5ecee; --ink-2:#b3c2c7; --muted:#84969c;
+    --accent:#e2673a; --accent-ink:#f08a5f; --accent-wash:#2a1a13;
+    --s1:#e2673a; --s2:#3d9ac9; --s3:#ad8c32;
+    --good:#5aa583; --good-wash:#16241e;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px -16px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0c1113; --surface:#151b1e; --surface-2:#1b2327; --line:#273237; --line-2:#202a2e;
+  --ink:#e5ecee; --ink-2:#b3c2c7; --muted:#84969c;
+  --accent:#e2673a; --accent-ink:#f08a5f; --accent-wash:#2a1a13;
+  --s1:#e2673a; --s2:#3d9ac9; --s3:#ad8c32;
+  --good:#5aa583; --good-wash:#16241e;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px -16px rgba(0,0,0,.7);
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:"IBM Plex Sans","Helvetica Neue",Arial,sans-serif;
+  font-size:15px; line-height:1.55; margin:0;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1080px; margin:0 auto; padding:0 20px 80px}
+h1,h2,h3,.eyebrow,.tag{font-family:Oswald,"Arial Narrow",Arial,sans-serif; font-weight:500}
+h1{font-size:clamp(34px,6vw,58px); line-height:1.02; margin:0; letter-spacing:-.01em; text-wrap:balance; font-weight:600}
+h2{font-size:clamp(22px,3vw,29px); line-height:1.1; margin:0; text-wrap:balance}
+h3{font-size:17px; margin:0; letter-spacing:.01em}
+p{margin:0}
+.num{font-family:"IBM Plex Mono",ui-monospace,monospace; font-variant-numeric:tabular-nums}
+.eyebrow{
+  font-size:12px; letter-spacing:.16em; text-transform:uppercase; color:var(--muted);
+  display:flex; align-items:center; gap:10px;
+}
+.eyebrow::after{content:""; flex:1; height:1px; background:var(--line)}
+.lede{color:var(--ink-2); max-width:64ch}
+.small{font-size:13px; color:var(--muted)}
+
+/* ---------- header ---------- */
+header{
+  border-bottom:1px solid var(--line);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 6%, transparent), transparent 60%),
+    var(--surface);
+}
+.hd{max-width:1080px; margin:0 auto; padding:34px 20px 30px; display:flex; flex-direction:column; gap:16px}
+.hd .rule{display:flex; align-items:baseline; gap:12px; font-family:Oswald,Arial,sans-serif;
+  font-size:12px; letter-spacing:.18em; text-transform:uppercase; color:var(--accent-ink)}
+.hd .rule span:last-child{color:var(--muted)}
+.meta{display:flex; flex-wrap:wrap; gap:8px; margin-top:2px}
+.tag{
+  font-size:11.5px; letter-spacing:.09em; text-transform:uppercase;
+  border:1px solid var(--line); border-radius:2px; padding:3px 9px; color:var(--ink-2);
+  background:var(--surface-2);
+}
+.tag.hot{border-color:color-mix(in srgb,var(--accent) 45%, var(--line)); color:var(--accent-ink); background:var(--accent-wash)}
+
+/* ---------- sections ---------- */
+section{margin-top:52px}
+.sec-head{display:flex; flex-direction:column; gap:9px; margin-bottom:22px}
+
+/* ---------- panels ---------- */
+.panel{background:var(--surface); border:1px solid var(--line); border-radius:4px; box-shadow:var(--shadow)}
+.calc{display:grid; grid-template-columns:minmax(280px,340px) 1fr; gap:18px; align-items:start}
+@media (max-width:860px){.calc{grid-template-columns:1fr}}
+
+.controls{padding:18px 18px 20px; display:flex; flex-direction:column; gap:16px}
+.ctl-group{display:flex; flex-direction:column; gap:10px}
+.ctl-group > .eyebrow{font-size:11px}
+.field{display:grid; grid-template-columns:1fr auto; align-items:center; gap:8px}
+.field label{font-size:13.5px; color:var(--ink-2); line-height:1.3}
+.field input[type=number]{
+  width:84px; text-align:right; font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums;
+  font-size:13.5px; padding:5px 8px; border:1px solid var(--line); border-radius:3px;
+  background:var(--surface-2); color:var(--ink);
+}
+.field input[type=number]:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
+.slider{display:flex; flex-direction:column; gap:5px}
+.slider .top{display:flex; justify-content:space-between; align-items:baseline; gap:10px}
+.slider .top b{font-family:"IBM Plex Mono",monospace; font-size:18px; font-weight:600; font-variant-numeric:tabular-nums}
+.slider label{font-size:13.5px; color:var(--ink-2)}
+input[type=range]{
+  -webkit-appearance:none; appearance:none; width:100%; height:22px; background:transparent; cursor:pointer;
+}
+input[type=range]::-webkit-slider-runnable-track{height:3px; background:var(--line); border-radius:2px}
+input[type=range]::-moz-range-track{height:3px; background:var(--line); border-radius:2px}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none; width:16px; height:16px; margin-top:-6.5px; border-radius:50%;
+  background:var(--accent); border:2px solid var(--surface); box-shadow:0 0 0 1px var(--accent);
+}
+input[type=range]::-moz-range-thumb{
+  width:16px; height:16px; border-radius:50%; background:var(--accent);
+  border:2px solid var(--surface); box-shadow:0 0 0 1px var(--accent);
+}
+input[type=range]:focus-visible{outline:2px solid var(--accent); outline-offset:3px; border-radius:3px}
+
+.seg{display:flex; border:1px solid var(--line); border-radius:3px; overflow:hidden}
+.seg button{
+  flex:1; padding:7px 0; border:0; background:var(--surface-2); color:var(--ink-2); cursor:pointer;
+  font-family:"IBM Plex Mono",monospace; font-size:13.5px;
+}
+.seg button + button{border-left:1px solid var(--line)}
+.seg button[aria-pressed="true"]{background:var(--accent); color:#fff}
+.seg button:focus-visible{outline:2px solid var(--accent); outline-offset:-2px}
+
+/* ---------- result cards ---------- */
+.cards{display:grid; grid-template-columns:1fr 1fr; gap:18px}
+@media (max-width:720px){.cards{grid-template-columns:1fr}}
+.card{padding:18px; display:flex; flex-direction:column; gap:14px}
+.card > header{background:none; border:0; padding:0}
+.card .ttl{display:flex; flex-direction:column; gap:2px}
+.card .ttl .sub{font-size:12.5px; color:var(--muted)}
+.hero{display:flex; align-items:baseline; gap:10px; flex-wrap:wrap}
+.hero .big{font-family:"IBM Plex Mono",monospace; font-size:40px; font-weight:600; letter-spacing:-.02em; line-height:1; font-variant-numeric:tabular-nums}
+.hero .unit{font-size:13px; color:var(--muted)}
+.kpis{display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--line-2); border:1px solid var(--line-2); border-radius:3px}
+.kpi{background:var(--surface); padding:9px 11px; min-height:60px; display:flex; flex-direction:column; gap:2px}
+.kpi .k{font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); font-family:Oswald,Arial,sans-serif}
+.kpi .v{font-family:"IBM Plex Mono",monospace; font-size:17px; font-weight:500; font-variant-numeric:tabular-nums}
+.kpi .v.pos{color:var(--good)}
+
+.bar{display:flex; gap:2px; height:26px; border-radius:3px; overflow:hidden}
+.bar span{display:block}
+.bar .g{background:var(--s1)} .bar .c{background:var(--s2)} .bar .a{background:var(--s3)}
+.legend{display:flex; flex-wrap:wrap; gap:4px 16px; font-size:12.5px; color:var(--ink-2)}
+.legend i{display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:6px; vertical-align:baseline}
+.legend .num{color:var(--ink); font-weight:500}
+
+.verdict{
+  margin-top:18px; padding:14px 16px; border:1px solid var(--line); border-left:3px solid var(--accent);
+  border-radius:3px; background:var(--surface); display:flex; flex-direction:column; gap:4px;
+}
+.verdict b{font-weight:600}
+
+/* ---------- tables ---------- */
+.scroll{overflow-x:auto; border:1px solid var(--line); border-radius:4px; background:var(--surface)}
+table{border-collapse:collapse; width:100%; font-size:13.5px; min-width:720px}
+th,td{text-align:left; padding:10px 13px; border-bottom:1px solid var(--line-2); vertical-align:top}
+thead th{
+  font-family:Oswald,Arial,sans-serif; font-weight:500; font-size:11.5px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--muted); background:var(--surface-2); white-space:nowrap;
+  position:sticky; top:0;
+}
+tbody tr:last-child td{border-bottom:0}
+tbody tr.us{background:var(--accent-wash)}
+tbody tr.us td:first-child{font-weight:600}
+td.n{font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums; white-space:nowrap}
+.chip{display:inline-block; font-size:11.5px; padding:2px 7px; border-radius:2px; border:1px solid var(--line); color:var(--ink-2); background:var(--surface-2); white-space:nowrap}
+.chip.ok{border-color:color-mix(in srgb,var(--good) 40%,var(--line)); color:var(--good); background:var(--good-wash)}
+.chip.no{border-color:color-mix(in srgb,var(--accent) 40%,var(--line)); color:var(--accent-ink); background:var(--accent-wash)}
+
+/* ---------- naming ---------- */
+.names{display:grid; grid-template-columns:repeat(auto-fill,minmax(232px,1fr)); gap:14px}
+.name{padding:14px 15px; display:flex; flex-direction:column; gap:7px}
+.name .n{font-family:Oswald,Arial,sans-serif; font-size:22px; font-weight:600; letter-spacing:.005em}
+.name .d{font-family:"IBM Plex Mono",monospace; font-size:12.5px; color:var(--accent-ink)}
+.name p{font-size:13px; color:var(--ink-2)}
+.name.top{border-color:color-mix(in srgb,var(--accent) 40%,var(--line)); border-top:3px solid var(--accent)}
+.rank{font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--muted)}
+
+/* ---------- risks ---------- */
+.risks{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+@media (max-width:720px){.risks{grid-template-columns:1fr}}
+.risk{padding:15px 16px; display:flex; flex-direction:column; gap:8px}
+.risk h3{color:var(--accent-ink)}
+.risk p{font-size:13.5px; color:var(--ink-2)}
+
+footer{margin-top:56px; padding-top:20px; border-top:1px solid var(--line); color:var(--muted); font-size:12.5px}
+a{color:var(--accent-ink)}
+@media (prefers-reduced-motion:no-preference){
+  .bar span{transition:flex-grow .25s ease}
+  .hero .big, .kpi .v{transition:color .2s ease}
+}
+</style>
+
+<header>
+  <div class="hd">
+    <div class="rule"><span>Рынок США</span><span>·</span><span>29 августа 2026</span></div>
+    <h1>Экономика одной плиты</h1>
+    <p class="lede">Сколько приносит одна станция «камера + Jetson + монитор жарщика» по двум тарифам,
+      кто уже занял поле и как назвать это по-английски. Крутите ползунки — все цифры пересчитываются.</p>
+    <div class="meta">
+      <span class="tag hot">Тариф A · железо клиента</span>
+      <span class="tag hot">Тариф B · железо наше</span>
+      <span class="tag">1 камера · 1 Jetson Orin Nano Super 8GB · 1 монитор</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">Калькулятор</div>
+    <h2>Выручка и маржа с локации</h2>
+    <p class="lede small">Дефолты взяты из спецификации железа на август 2026 и ценовых якорей рынка
+      (PreciTaste — $399/мес, Solink — от $175/локацию, Tec-Tel — $23–39/камеру).</p>
+  </div>
+
+  <div class="calc">
+    <div class="panel controls">
+      <div class="ctl-group">
+        <div class="eyebrow">Конфигурация</div>
+        <div class="field" style="grid-template-columns:1fr">
+          <label id="st-label">Станций (плит) на локации</label>
+          <div class="seg" role="group" aria-labelledby="st-label">
+            <button type="button" data-st="1" aria-pressed="true">1</button>
+            <button type="button" data-st="2" aria-pressed="false">2</button>
+            <button type="button" data-st="3" aria-pressed="false">3</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="ctl-group">
+        <div class="eyebrow">Цена</div>
+        <div class="slider">
+          <div class="top"><label for="pa">Тариф A, $/мес за станцию</label><b class="num" id="pa-out">199</b></div>
+          <input type="range" id="pa" min="99" max="399" step="10" value="199">
+        </div>
+        <div class="slider">
+          <div class="top"><label for="pb">Тариф B, $/мес за станцию</label><b class="num" id="pb-out">349</b></div>
+          <input type="range" id="pb" min="149" max="599" step="10" value="349">
+        </div>
+        <div class="field"><label for="disc">Скидка на 2-ю и 3-ю станцию, %</label><input type="number" id="disc" value="25" min="0" max="60" step="5"></div>
+      </div>
+
+      <div class="ctl-group">
+        <div class="eyebrow">Себестоимость</div>
+        <div class="field"><label for="bom">Комплект железа с монтажом, $</label><input type="number" id="bom" value="1390" min="0" step="10"></div>
+        <div class="field"><label for="cloud">Облако и data-ops, $/мес/ст.</label><input type="number" id="cloud" value="15" min="0" step="1"></div>
+        <div class="field"><label for="supp">Поддержка, $/мес/ст.</label><input type="number" id="supp" value="12" min="0" step="1"></div>
+        <div class="field"><label for="warr">Резерв на замену железа, $/мес/ст. (B)</label><input type="number" id="warr" value="9" min="0" step="1"></div>
+        <div class="field"><label for="amort">Амортизация железа, мес</label><input type="number" id="amort" value="36" min="12" max="60" step="6"></div>
+      </div>
+
+      <div class="ctl-group">
+        <div class="eyebrow">Воронка</div>
+        <div class="field"><label for="cac">CAC на локацию, $</label><input type="number" id="cac" value="2000" min="0" step="100"></div>
+        <div class="field"><label for="churn">Отток, %/мес</label><input type="number" id="churn" value="2" min="0.2" max="10" step="0.1"></div>
+      </div>
+    </div>
+
+    <div class="cards" id="cards">
+      <div class="panel card" id="card-a">
+        <div class="ttl"><h3>Тариф A — софт</h3><span class="sub">железо покупает клиент</span></div>
+        <div class="hero"><span class="big num" id="a-mrr">$199</span><span class="unit">в месяц с локации</span></div>
+        <div class="kpis">
+          <div class="kpi"><span class="k">Выручка в год</span><span class="v num" id="a-arr"></span></div>
+          <div class="kpi"><span class="k">Валовая прибыль/год</span><span class="v num pos" id="a-gpy"></span></div>
+          <div class="kpi"><span class="k">Валовая маржа</span><span class="v num" id="a-gm"></span></div>
+          <div class="kpi"><span class="k">Окупаемость CAC</span><span class="v num" id="a-cacp"></span></div>
+          <div class="kpi"><span class="k">LTV</span><span class="v num" id="a-ltv"></span></div>
+          <div class="kpi"><span class="k">LTV / CAC</span><span class="v num" id="a-lc"></span></div>
+        </div>
+        <div>
+          <div class="bar" id="a-bar" role="img" aria-label="Структура месячной выручки тарифа A">
+            <span class="g" id="a-bg"></span><span class="c" id="a-bc"></span>
+          </div>
+          <div class="legend" style="margin-top:8px">
+            <span><i style="background:var(--s1)"></i>Валовая прибыль <b class="num" id="a-lg"></b></span>
+            <span><i style="background:var(--s2)"></i>Денежный COGS <b class="num" id="a-lc2"></b></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel card" id="card-b">
+        <div class="ttl"><h3>Тариф B — всё наше</h3><span class="sub">железо у клиента под ответственность</span></div>
+        <div class="hero"><span class="big num" id="b-mrr">$349</span><span class="unit">в месяц с локации</span></div>
+        <div class="kpis">
+          <div class="kpi"><span class="k">Выручка в год</span><span class="v num" id="b-arr"></span></div>
+          <div class="kpi"><span class="k">Валовая прибыль/год</span><span class="v num pos" id="b-gpy"></span></div>
+          <div class="kpi"><span class="k">Валовая маржа</span><span class="v num" id="b-gm"></span></div>
+          <div class="kpi"><span class="k">Окупаемость железа</span><span class="v num" id="b-hwp"></span></div>
+          <div class="kpi"><span class="k">LTV</span><span class="v num" id="b-ltv"></span></div>
+          <div class="kpi"><span class="k">LTV / CAC</span><span class="v num" id="b-lc"></span></div>
+        </div>
+        <div>
+          <div class="bar" id="b-bar" role="img" aria-label="Структура месячной выручки тарифа B">
+            <span class="g" id="b-bg"></span><span class="c" id="b-bc"></span><span class="a" id="b-ba"></span>
+          </div>
+          <div class="legend" style="margin-top:8px">
+            <span><i style="background:var(--s1)"></i>Валовая прибыль <b class="num" id="b-lg"></b></span>
+            <span><i style="background:var(--s2)"></i>Денежный COGS <b class="num" id="b-lc2"></b></span>
+            <span><i style="background:var(--s3)"></i>Амортизация железа <b class="num" id="b-la"></b></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="verdict">
+    <span id="verdict-line"></span>
+    <span class="small" id="verdict-cap"></span>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">Проверка со стороны клиента</div>
+    <h2>Ниже какого объёма продавать нельзя</h2>
+    <p class="lede small">Экономия клиента линейна по объёму жарки, а цена — нет. Пересечение этих
+      двух линий задаёт минимальный размер локации, которую вообще имеет смысл подключать.</p>
+  </div>
+
+  <div class="calc">
+    <div class="panel controls">
+      <div class="ctl-group">
+        <div class="eyebrow">Локация клиента</div>
+        <div class="slider">
+          <div class="top"><label for="ppd">Котлет в день</label><b class="num" id="ppd-out">400</b></div>
+          <input type="range" id="ppd" min="80" max="1200" step="20" value="400">
+        </div>
+        <div class="field"><label for="fc">Себестоимость котлеты, $</label><input type="number" id="fc" value="1.30" min="0.2" max="4" step="0.05"></div>
+        <div class="field"><label for="dbr">Снижение брака, п.п.</label><input type="number" id="dbr" value="1.5" min="0.1" max="6" step="0.1"></div>
+        <div class="field"><label for="comps">Компы и возвраты, $ на 1000 котлет</label><input type="number" id="comps" value="15.6" min="0" max="80" step="0.4"></div>
+        <div class="field"><label for="fixed">Обучение и время менеджера, $/мес</label><input type="number" id="fixed" value="96" min="0" step="10"></div>
+        <p class="small">Компы масштабируются с объёмом жарки, обучение — нет. Отсюда и берётся порог.</p>
+      </div>
+    </div>
+
+    <div class="cards">
+      <div class="panel card">
+        <div class="ttl"><h3>Экономия клиента</h3><span class="sub">в месяц, «жёсткая» часть</span></div>
+        <div class="hero"><span class="big num" id="save">$520</span><span class="unit">против цены тарифа B</span></div>
+        <div class="kpis">
+          <div class="kpi"><span class="k">Брак прожарки</span><span class="v num" id="save-food"></span></div>
+          <div class="kpi"><span class="k">Компы и возвраты</span><span class="v num" id="save-comps"></span></div>
+          <div class="kpi"><span class="k">ROI на тарифе A</span><span class="v num pos" id="roi-a"></span></div>
+          <div class="kpi"><span class="k">ROI на тарифе B</span><span class="v num pos" id="roi-b"></span></div>
+        </div>
+      </div>
+      <div class="panel card">
+        <div class="ttl"><h3>Порог ICP</h3><span class="sub">объём, ниже которого сделка убыточна для клиента</span></div>
+        <div class="hero"><span class="big num" id="bep">240</span><span class="unit">котлет в день — безубыточность</span></div>
+        <div class="kpis" style="grid-template-columns:1fr 1fr">
+          <div class="kpi"><span class="k">Уверенная продажа B, ROI 1.5×</span><span class="v num" id="bep15"></span></div>
+          <div class="kpi"><span class="k">Безубыточность на тарифе A</span><span class="v num" id="bepa"></span></div>
+        </div>
+        <p class="small" id="bep-note"></p>
+        <p class="small">Ниже порога клиент платит больше, чем экономит: он уйдёт через квартал и
+          испортит вам метрику оттока. Такую локацию нужно отказывать, даже если она готова платить.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">Конкуренты</div>
+    <h2>Кто уже стоит над американской плитой</h2>
+    <p class="lede small">Главный факт поля: технологию, идентичную нашей, довели до продакшена
+      ещё в 2021-м — и не смогли продать. Ниша не занята, она брошена.</p>
+  </div>
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>Игрок</th><th>Единица анализа</th><th>Подсказка повару</th>
+          <th>Капекс</th><th>Подписка</th><th>Состояние 2026</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="us">
+          <td>Мы</td><td>Котлета и её сторона</td><td><span class="chip ok">HUD + звук</span></td>
+          <td class="n">~$900</td><td class="n">$199–349</td><td>Пилот на реальной плите</td>
+        </tr>
+        <tr>
+          <td>Miso — CookRight Grill</td><td>Продукт на гриле</td><td><span class="chip ok">Да, планшет</span></td>
+          <td class="n">н/д</td><td class="n">~$100</td>
+          <td>Выручка Miso <b>$385K за 2024</b>, 14 роботов Flippy. Технология есть, продаж нет</td>
+        </tr>
+        <tr>
+          <td>PreciTaste</td><td>Партия, витрина</td><td><span class="chip">Частично</span></td>
+          <td class="n">$2 000</td><td class="n">$399</td><td>Chipotle, Dunkin'. Наш ценовой якорь сверху</td>
+        </tr>
+        <tr>
+          <td>Berry AI</td><td>Авто в drive-thru</td><td><span class="chip no">Нет</span></td>
+          <td class="n">н/д</td><td class="n">н/д</td><td>Culver's: 1 000+ ресторанов brand-wide, 2026</td>
+        </tr>
+        <tr>
+          <td>Agot AI → HME</td><td>Заказ, комплектность</td><td><span class="chip no">Нет</span></td>
+          <td class="n">н/д</td><td class="n">н/д</td><td>Куплен HM Electronics 04.2025 — канал в 40k+ drive-thru</td>
+        </tr>
+        <tr>
+          <td>Wobot.ai</td><td>Событие в кадре</td><td><span class="chip no">Нет</span></td>
+          <td class="n">$0</td><td class="n">custom</td><td>Гигиена и комплаенс, 100+ кейсов</td>
+        </tr>
+        <tr>
+          <td>Tec-Tel</td><td>Кадр на своей камере</td><td><span class="chip no">Нет</span></td>
+          <td class="n">$0</td><td class="n">$23–39/кам</td><td>Нижняя граница цены рынка — с ней будут сравнивать</td>
+        </tr>
+        <tr>
+          <td>Solink</td><td>Видео + POS</td><td><span class="chip no">Нет</span></td>
+          <td class="n">включён</td><td class="n">от $175</td><td>Per-location, loss prevention</td>
+        </tr>
+        <tr>
+          <td>Taylor clamshell (Middleby)</td><td>Программа гриля</td><td><span class="chip ok">Гриль сам</span></td>
+          <td class="n">$20k+</td><td class="n">—</td>
+          <td>75 профилей меню, переворот не нужен. <b>Закрывает McDonald's и BK — это не наш рынок</b></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="verdict">
+    <span><b>Где мы выигрываем:</b> единственные считаем отдельную котлету и сторону, на которой она лежит,
+      на открытом flat-top, за капекс в 20 раз ниже кламшелла.</span>
+    <span class="small">Целевой рынок — не McDonald's и BK (там боль закрыта железом), а smash-burger,
+      better-burger, fast-casual, дайнеры и франчайзи-группы: <b>25–35 тыс. локаций США</b>
+      из 98 681 бургерной.</span>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">Нейминг · домены проверены 29.08.2026</div>
+    <h2>Как это назвать по-английски</h2>
+    <p class="lede small">Три отсева: имя должно произноситься в шуме кухни, не пахнуть надзором
+      (иначе смена саботирует внедрение) и не запирать компанию в котлетах.</p>
+  </div>
+  <div class="names">
+    <div class="panel name top">
+      <span class="rank">Выбор 1 · действие</span>
+      <span class="n">FlipCue</span><span class="d">flipcue.ai · $160 / 2 года</span>
+      <p>«Cue» — это подсказка, а не слежка. Название само объясняет демо за секунду. <code>.com</code> занят.</p>
+    </div>
+    <div class="panel name top">
+      <span class="rank">Выбор 2 · платформа</span>
+      <span class="n">Cookline</span><span class="d">cookline.ai · $160 / 2 года</span>
+      <p>Отраслевой термин «линия готовки». Звучит как категория, а не как фича, — растёт на фритюр и бройлер.</p>
+    </div>
+    <div class="panel name top">
+      <span class="rank">Выбор 3 · бренд</span>
+      <span class="n">Plancha</span><span class="d">plancha.ai · $160 / 2 года</span>
+      <p>Испанский плоский гриль: шефы знают, марка защищается легко. Минус — половина операторов QSR не знает слова.</p>
+    </div>
+    <div class="panel name">
+      <span class="rank">Резерв</span>
+      <span class="n">SearOps</span><span class="d">searops.com · $11 / год</span>
+      <p>Попадает в лексикон ops-покупателя, который и подписывает счёт.</p>
+    </div>
+    <div class="panel name">
+      <span class="rank">Резерв</span>
+      <span class="n">Flattop</span><span class="d">flattop.ai · $160 / 2 года</span>
+      <p>Сленг для плоского гриля — «свой» внутри отрасли, но пустой снаружи.</p>
+    </div>
+    <div class="panel name">
+      <span class="rank">Резерв · лендинг</span>
+      <span class="n">SearTime <span class="small">· GriddleIQ</span></span>
+      <span class="d">seartime.com · griddleiq.com · $11 / год</span>
+      <p>Дёшево и понятно для лендинга пилота, слабо как марка на годы.</p>
+    </div>
+    <div class="panel name">
+      <span class="rank">Только как имя модуля</span>
+      <span class="n">PattyIQ <span class="small">· PattyPilot</span></span>
+      <span class="d">pattyiq.com · pattypilot.com · $11 / год</span>
+      <p>«Patty» в имени компании запирает в котлетах. Идеально — как название первого модуля внутри бренда.</p>
+    </div>
+    <div class="panel name">
+      <span class="rank">Занято</span>
+      <span class="n">Maillard <span class="small">· CookRight</span></span>
+      <span class="d">домены заняты · CookRight — марка Miso</span>
+      <p>Лучшая семантика в категории уже разобрана. Проверка домена ≠ проверка марки: перед регистрацией — USPTO TESS, классы 9 и 42.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">Блокеры до первой продажи в США</div>
+    <h2>Два риска, которые дороже всей выручки</h2>
+  </div>
+  <div class="risks">
+    <div class="panel risk">
+      <h3>Биометрия: BIPA (Иллинойс)</h3>
+      <p>В репозитории лежит классификатор лиц (<code>models/face_clf_v3.joblib</code>). Привязка
+        «кто жарил» по лицу — это биометрический идентификатор: <b>$1 000</b> за небрежное и
+        <b>$5 000</b> за умышленное нарушение, иск возможен без доказательства ущерба.
+        Поправка 2024 г. ограничила накопление до одного взыскания на человека, но групповой иск
+        от смены поваров всё равно съест годовую выручку.</p>
+      <p><b>Что делать:</b> вырезать распознавание лиц из продакшен-сборки. Атрибуция по расписанию
+        смен и PIN уже реализована — таблица <code>shifts</code>.</p>
+    </div>
+    <div class="panel risk">
+      <h3>Патенты Miso Robotics</h3>
+      <p>Внутренний REPORT называет патент US 12 462 547 «юридически заявленной схемой = нашей
+        архитектуре». По публичному описанию независимые пункты привязаны к <b>роботизированной
+        руке</b> — камера-только система в них, скорее всего, не попадает. Но у Miso портфель, а не
+        один патент.</p>
+      <p><b>Что делать:</b> формальный FTO-анализ портфеля у патентного поверенного до продаж,
+        бюджет $8–15k. Дешевле, чем узнать ответ в суде.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  Источники цен и рыночных величин: IBISWorld, PR Newswire, Fortune, Restaurant Business, Tec-Tel,
+  Solink, GlobeNewswire, CNX Software, NVIDIA, FRED, Taylor Company, DTiQ, Hunton. Полный список ссылок
+  и вывод каждой цифры — в <code>docs/US_GTM.md</code> репозитория. Себестоимость и операционные
+  расходы — наши оценки на август 2026, цены конкурентов — публичные данные.
+</footer>
+</div>
+
+<script>
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  var money = function(v){ return '$' + Math.round(v).toLocaleString('ru-RU'); };
+  var money1 = function(v){ return '$' + (Math.round(v*10)/10).toLocaleString('ru-RU'); };
+  var stations = 1;
+
+  document.querySelectorAll('.seg button').forEach(function(b){
+    b.addEventListener('click', function(){
+      stations = +b.dataset.st;
+      document.querySelectorAll('.seg button').forEach(function(x){
+        x.setAttribute('aria-pressed', String(+x.dataset.st === stations));
+      });
+      render();
+    });
+  });
+
+  ['pa','pb','disc','bom','cloud','supp','warr','amort','cac','churn','ppd','fc','dbr','comps','fixed']
+    .forEach(function(id){ $(id).addEventListener('input', render); });
+
+  function tariff(price, perStationCost, hwCost){
+    var disc = 1 - (+$('disc').value)/100;
+    var mrr = price + (stations - 1) * price * disc;
+    var payments = mrr * 0.029 + 0.30;
+    var cash = perStationCost * stations + payments;
+    var amortM = Math.max(1, +$('amort').value);
+    var amort = hwCost * stations / amortM;
+    var gp = mrr - cash - amort;
+    var churn = Math.max(0.1, +$('churn').value) / 100;
+    var cac = +$('cac').value;
+    return {
+      mrr: mrr, arr: mrr * 12, cash: cash, amort: amort, gp: gp, gpy: gp * 12,
+      gm: mrr > 0 ? gp / mrr : 0,
+      ltv: gp / churn, lc: cac > 0 ? (gp / churn) / cac : Infinity,
+      cacp: gp > 0 ? cac / gp : Infinity,
+      hwPayback: hwCost > 0 ? (hwCost * stations) / Math.max(1, mrr - cash) : 0
+    };
+  }
+
+  function paintBar(total, parts){
+    parts.forEach(function(p){
+      p.el.style.flexGrow = String(Math.max(0.0001, p.v / total));
+      p.el.style.flexBasis = '0';
+    });
+  }
+
+  function render(){
+    $('pa-out').textContent = $('pa').value;
+    $('pb-out').textContent = $('pb').value;
+    $('ppd-out').textContent = (+$('ppd').value).toLocaleString('ru-RU');
+
+    var perA = (+$('cloud').value) + (+$('supp').value);
+    var perB = perA + (+$('warr').value);
+    var bom  = +$('bom').value;
+
+    var A = tariff(+$('pa').value, perA, 0);
+    var B = tariff(+$('pb').value, perB, bom);
+
+    $('a-mrr').textContent = money(A.mrr);
+    $('a-arr').textContent = money(A.arr);
+    $('a-gpy').textContent = money(A.gpy);
+    $('a-gm').textContent  = Math.round(A.gm * 100) + '%';
+    $('a-cacp').textContent = isFinite(A.cacp) ? (Math.round(A.cacp * 10) / 10) + ' мес' : '—';
+    $('a-ltv').textContent = money(A.ltv);
+    $('a-lc').textContent  = isFinite(A.lc) ? (Math.round(A.lc * 10) / 10) + '×' : '—';
+    $('a-lg').textContent  = money(A.gp);
+    $('a-lc2').textContent = money(A.cash);
+    paintBar(A.mrr, [{el:$('a-bg'), v:Math.max(0,A.gp)}, {el:$('a-bc'), v:A.cash}]);
+
+    $('b-mrr').textContent = money(B.mrr);
+    $('b-arr').textContent = money(B.arr);
+    $('b-gpy').textContent = money(B.gpy);
+    $('b-gm').textContent  = Math.round(B.gm * 100) + '%';
+    $('b-hwp').textContent = (Math.round(B.hwPayback * 10) / 10) + ' мес';
+    $('b-ltv').textContent = money(B.ltv);
+    $('b-lc').textContent  = isFinite(B.lc) ? (Math.round(B.lc * 10) / 10) + '×' : '—';
+    $('b-lg').textContent  = money(B.gp);
+    $('b-lc2').textContent = money(B.cash);
+    $('b-la').textContent  = money(B.amort);
+    paintBar(B.mrr, [{el:$('b-bg'), v:Math.max(0,B.gp)}, {el:$('b-bc'), v:B.cash}, {el:$('b-ba'), v:B.amort}]);
+
+    var dRev = B.arr - A.arr, dGp = B.gpy - A.gpy;
+    var better = dGp >= 0 ? 'B' : 'A';
+    $('verdict-line').innerHTML = 'Тариф <b>B</b> даёт <b>' + money(Math.abs(dRev)) + '</b> ' +
+      (dRev >= 0 ? 'больше' : 'меньше') + ' выручки и <b>' + money(Math.abs(dGp)) + '</b> ' +
+      (dGp >= 0 ? 'больше' : 'меньше') + ' валовой прибыли в год с локации; комплект окупается за <b>' +
+      (Math.round(B.hwPayback * 10) / 10) + ' мес</b>. При текущих вводных выгоднее тариф <b>' + better + '</b>.';
+    $('verdict-cap').textContent = 'Но на 50 локациях тарифа B в оборотке связано ' +
+      money(bom * stations * 50) + ' железа — поэтому тариф A нужен как способ входить в сделку без ' +
+      'закупки, а не как основной.';
+
+    // --- клиентский ROI ---
+    var ppd = +$('ppd').value, fc = +$('fc').value, dbr = (+$('dbr').value)/100;
+    var compRate = (+$('comps').value)/1000, fixed = +$('fixed').value;
+    var monthly = ppd * 30.4;
+    var food = monthly * dbr * fc;
+    var comps = monthly * compRate;
+    var total = food + comps + fixed;
+    $('save').textContent = money(total);
+    $('save-food').textContent = money(food);
+    $('save-comps').textContent = money(comps);
+    $('roi-a').textContent = (Math.round(total / Math.max(1,A.mrr) * 10) / 10) + '×';
+    $('roi-b').textContent = (Math.round(total / Math.max(1,B.mrr) * 10) / 10) + '×';
+
+    // порог = объём, при котором объёмо-зависимая экономия закрывает цену за вычетом фиксированной части
+    var perDay = 30.4 * (dbr * fc + compRate);   // $ экономии в месяц на каждую котлету/день
+    var round10 = function(v){ return Math.max(0, Math.round(v / 10) * 10); };
+    var threshold = function(price, k){ return perDay > 0 ? (price * k - fixed) / perDay : 0; };
+    var bep = threshold(B.mrr, 1), bep15 = threshold(B.mrr, 1.5), bepa = threshold(A.mrr, 1);
+
+    if (bep <= 0){
+      $('bep').textContent = '0';
+      $('bep-note').innerHTML = 'Фиксированная экономия ' + money(fixed) + '/мес уже перекрывает цену тарифа B — ' +
+        'порог задаёт не объём локации, а доверие клиента к этим цифрам.';
+    } else {
+      $('bep').textContent = round10(bep).toLocaleString('ru-RU');
+      $('bep-note').innerHTML = 'Считаем так: цена минус фиксированная экономия (' + money(fixed) +
+        '), делённая на экономию с одной котлеты в день (' + money1(perDay) + '/мес). ' +
+        'Продавать стоит от <b>' + round10(bep15).toLocaleString('ru-RU') +
+        ' котлет в день</b> — там ROI клиента уже 1.5×, а не впритык.';
+    }
+    $('bep15').textContent = round10(bep15).toLocaleString('ru-RU') + ' /день';
+    $('bepa').textContent = round10(bepa).toLocaleString('ru-RU') + ' /день';
+  }
+
+  render();
+})();
+</script>
