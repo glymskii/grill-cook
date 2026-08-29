@@ -1,88 +1,167 @@
 <!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Grill Cook — Pilot Admin</title>
+<title>Grill Cook — Admin</title>
 <style>
-  :root{--bg:#f4f6f9;--fg:#17222d;--card:#fff;--line:#dde4ec;--dim:#5b6b7b;
-        --ok:#1d9e5f;--warn:#c77d1b;--bad:#c43b40;--accent:#2a78d6}
-  @media(prefers-color-scheme:dark){:root{--bg:#0b0f14;--fg:#e8eef5;--card:#141b23;--line:#243040;--dim:#8fa1b3;--accent:#3987e5}}
-  *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);
-    font:15px/1.45 -apple-system,system-ui,sans-serif;padding:18px}
-  h1{font-size:20px;margin:0 0 14px}h2{font-size:15px;margin:0 0 10px}
-  .grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));max-width:1200px}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
-  label{display:block;font-size:12.5px;color:var(--dim);margin:8px 0 3px}
-  input,select{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:8px;
+  :root{--bg:#f2f5f9;--fg:#16212c;--card:#fff;--line:#dbe3ec;--dim:#5b6b7b;
+        --ok:#178f56;--warn:#b26e12;--bad:#c03538;--accent:#2a78d6;--accent2:#eaf2fc;
+        --shadow:0 1px 2px rgba(15,30,50,.06),0 4px 14px rgba(15,30,50,.05)}
+  @media(prefers-color-scheme:dark){:root{--bg:#0a0e13;--fg:#e8eef5;--card:#131a22;
+        --line:#22303f;--dim:#8fa1b3;--ok:#2fbf71;--warn:#e6a23c;--bad:#e5595d;
+        --accent:#3987e5;--accent2:#16283d;--shadow:0 1px 2px rgba(0,0,0,.4)}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:14.5px/1.5 -apple-system,system-ui,"Segoe UI",sans-serif}
+  .num{font-variant-numeric:tabular-nums}
+  /* ---- top bar ---- */
+  #top{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:18px;
+    padding:10px 22px;background:var(--card);border-bottom:1px solid var(--line);box-shadow:var(--shadow)}
+  #brand{font-weight:700;font-size:16px;white-space:nowrap}
+  #brand span{color:var(--dim);font-weight:500}
+  nav{display:flex;gap:2px;flex:1;overflow-x:auto}
+  nav a{color:var(--dim);text-decoration:none;padding:6px 11px;border-radius:8px;font-size:13.5px;white-space:nowrap}
+  nav a:hover{background:var(--accent2);color:var(--accent)}
+  #dots{display:flex;gap:12px;font-size:12.5px;color:var(--dim);white-space:nowrap}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--bad);margin-right:5px}
+  .dot.on{background:var(--ok)}
+  /* ---- layout ---- */
+  main{max-width:1240px;margin:0 auto;padding:20px 22px 60px}
+  section{margin-top:26px;scroll-margin-top:70px}
+  section>h2{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);
+    margin:0 0 10px;font-weight:600}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:18px;box-shadow:var(--shadow)}
+  .grid2{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
+  label{display:block;font-size:12px;color:var(--dim);margin:10px 0 4px}
+  input,select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:9px;
     background:var(--bg);color:var(--fg);font-size:14px}
-  .row{display:flex;gap:10px}.row>*{flex:1}
-  button{margin-top:10px;padding:8px 14px;border:0;border-radius:9px;background:var(--accent);
-    color:#fff;font-size:14px;font-weight:600;cursor:pointer}
+  input:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px}
+  .row{display:flex;gap:12px}.row>*{flex:1}
+  button{padding:9px 16px;border:0;border-radius:10px;background:var(--accent);
+    color:#fff;font-size:13.5px;font-weight:600;cursor:pointer;transition:filter .15s}
+  button:hover{filter:brightness(1.08)}
   button.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent)}
   button.stop{background:var(--bad)}
-  .status{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px}
-  .chip{background:var(--bg);border:1px solid var(--line);border-radius:16px;padding:3px 10px;font-size:13px}
-  .chip b{font-weight:600}
+  button.sm{padding:4px 10px;font-size:12.5px}
+  button:disabled{opacity:.5;cursor:default}
+  .chip{display:inline-flex;align-items:center;gap:6px;background:var(--bg);
+    border:1px solid var(--line);border-radius:18px;padding:4px 12px;font-size:13px;margin:0 6px 6px 0}
+  .chip b{font-weight:650}
   table{width:100%;border-collapse:collapse;font-size:13.5px}
-  td,th{padding:5px 7px;border-bottom:1px solid var(--line);text-align:left}
-  .ev-flip{color:var(--accent)}.ev-placed{color:var(--ok)}.ev-removed{color:var(--dim)}
+  td,th{padding:7px 9px;border-bottom:1px solid var(--line);text-align:left}
+  th{font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim)}
+  tr:last-child td{border-bottom:0}
+  tbody tr:hover{background:var(--accent2)}
   .g-optimal{color:var(--ok)}.g-early{color:var(--warn)}.g-late{color:var(--bad)}
-  .note{font-size:12.5px;color:var(--dim);margin-top:6px}
-  #preview{width:100%;border-radius:8px;margin-top:8px;display:none}
-  .rec{font-size:15px;margin-top:8px}
-  .days{display:flex;gap:5px;margin-top:2px}
-  .days span{flex:1;text-align:center;padding:5px 0;border:1px solid var(--line);
+  .ev-flip{color:var(--accent)}.ev-placed{color:var(--ok)}.ev-removed{color:var(--dim)}
+  .note{font-size:12.5px;color:var(--dim);margin-top:8px}
+  .kpis{display:flex;flex-wrap:wrap;gap:10px}
+  .kpi{background:var(--bg);border:1px solid var(--line);border-radius:12px;
+    padding:10px 16px;min-width:118px}
+  .kpi .v{font-size:22px;font-weight:700;line-height:1.15}
+  .kpi .l{font-size:11.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+  .pbtn{opacity:.5}.pbtn.act{opacity:1}
+  .cmd{position:relative;background:var(--bg);border:1px solid var(--line);border-radius:10px;
+    padding:10px 84px 10px 12px;font:12px/1.5 ui-monospace,Menlo,monospace;
+    white-space:pre-wrap;word-break:break-all;margin-top:8px}
+  .cmd button{position:absolute;top:7px;right:7px}
+  #preview{width:100%;border-radius:10px;display:none}
+  .days{display:flex;gap:6px;margin-top:4px}
+  .days span{flex:1;text-align:center;padding:6px 0;border:1px solid var(--line);
     border-radius:8px;cursor:pointer;font-size:12.5px;user-select:none}
   .days span.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .shift-active{outline:2px solid var(--ok);outline-offset:-2px;border-radius:6px}
+  .fchip{cursor:pointer;user-select:none}
+  .fchip.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+  #healthbar,#daysvg{width:100%}
   a{color:var(--accent)}
 </style></head><body>
-<h1>🍔 Grill Cook — Pilot <span style="font-weight:400;color:var(--dim);font-size:14px">· <a href="/hud" target="_blank">open cook HUD ↗</a></span></h1>
-<div class="grid">
 
-<div class="card" style="grid-column:1/-1"><h2>Shift performance
-  <span style="float:right;font-weight:400">
-    <button class="ghost pbtn" data-p="today" style="margin:0;padding:3px 10px">Today</button>
-    <button class="ghost pbtn" data-p="7d" style="margin:0;padding:3px 10px">7 days</button>
-    <button class="ghost pbtn" data-p="all" style="margin:0;padding:3px 10px">All</button>
-  </span></h2>
-  <div class="status" id="kpi"><span class="chip">no data yet</span></div>
-  <div style="display:grid;grid-template-columns:2fr 1fr;gap:14px;margin-top:10px" id="an2">
-    <div><div class="note" style="margin:0 0 4px">Completed per hour · color = compliance (<span style="color:var(--ok)">✔ ≥80%</span> <span style="color:var(--warn)">⚠ 50–80%</span> <span style="color:var(--bad)">⛔ &lt;50%</span>)</div>
-      <svg id="hours" width="100%" height="90" preserveAspectRatio="none"></svg></div>
-    <div><table id="cooks"></table></div>
+<div id="top">
+  <div id="brand">🍔 Grill Cook <span id="loc">· …</span></div>
+  <nav>
+    <a href="#overview">Overview</a><a href="#live">Live</a><a href="#camera">Camera</a>
+    <a href="#targets">Targets</a><a href="#shifts">Shifts</a><a href="#events">Events</a>
+  </nav>
+  <div id="dots">
+    <span><span class="dot" id="d-edge"></span>edge</span>
+    <span><span class="dot" id="d-cam"></span>camera</span>
+    <span class="num" id="d-fps"></span>
   </div>
+  <button id="toggle">▶ Start</button>
 </div>
 
-<div class="card"><h2>Pipeline</h2>
-  <div class="status" id="status"><span class="chip">loading…</span></div>
-  <button id="toggle" style="width:100%">▶ Start</button>
-  <div style="position:relative"><img id="preview" alt="">
+<main>
+
+<section id="overview"><h2>Shift performance</h2>
+<div class="card">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+    <div class="kpis" id="kpi" style="flex:1"></div>
+    <span>
+      <button class="ghost sm pbtn" data-p="today">Today</button>
+      <button class="ghost sm pbtn" data-p="7d">7 days</button>
+      <button class="ghost sm pbtn" data-p="all">All</button>
+    </span>
+  </div>
+  <div style="display:grid;grid-template-columns:1.2fr .9fr 1fr;gap:18px" id="an-grid">
+    <div><div class="note" style="margin:0 0 4px">Completed per hour · <span style="color:var(--ok)">✔ ≥80%</span> <span style="color:var(--warn)">⚠ 50–80%</span> <span style="color:var(--bad)">⛔ &lt;50%</span></div>
+      <svg id="hours" height="96" preserveAspectRatio="none"></svg></div>
+    <div><div class="note" style="margin:0 0 4px">Last 7 days · volume &amp; compliance</div>
+      <svg id="daysvg" height="96" preserveAspectRatio="none"></svg></div>
+    <div><table id="cooks"></table></div>
+  </div>
+  <div class="note" style="margin-top:14px">System health · last 24 h (green = camera streaming, amber = edge online without stream, red = edge offline)</div>
+  <svg id="healthbar" height="18"></svg>
+</div>
+</section>
+
+<section id="live"><h2>Live station</h2>
+<div class="card">
+  <div id="live-chips" style="margin-bottom:8px"></div>
+  <div style="position:relative;max-width:840px"><img id="preview" alt="">
     <canvas id="roiCv" style="position:absolute;left:0;top:0;cursor:crosshair;display:none"></canvas></div>
-  <div class="row">
+  <div class="row" style="max-width:840px">
     <button class="ghost" id="roiEdit">✏️ Edit grill zone</button>
     <button id="roiSave" style="display:none">💾 Save zone</button>
     <button class="ghost" id="roiClear" style="display:none">🗑 Remove zone</button>
   </div>
   <div class="note">Timers run only inside the zone — the pass tray and prep boards stay silent.
-    Preview refreshes once a second while the pipeline is running.</div>
+  Cook display: <a id="hudlink" target="_blank" href="/hud">open ↗</a>
+  <button class="ghost sm" id="copyhud" style="margin-left:6px">copy cook link</button>
+  <span class="note">— read-only key, safe to leave on the tablet.</span></div>
 </div>
+</section>
 
-<div class="card"><h2>Camera &amp; model</h2>
-  <label>RTSP source (partner's webcam publishes to this relay)</label>
+<section id="camera"><h2>Camera &amp; model</h2>
+<div class="grid2">
+<div class="card">
+  <b>Connect a camera</b>
+  <div class="note" style="margin-top:4px">Point any RTSP publisher at the relay. From a laptop with a webcam (macOS):</div>
+  <div class="cmd" id="cmd-mac"></div>
+  <div class="note">Windows (find the name via <code>ffmpeg -list_devices true -f dshow -i dummy</code>):</div>
+  <div class="cmd" id="cmd-win"></div>
+  <div class="note">The stream indicator in the header turns green within ~3 s of a successful publish.</div>
+</div>
+<div class="card">
+  <b>Source &amp; model</b>
+  <label>RTSP source the edge reads</label>
   <input id="rtsp_url">
   <div class="row">
     <div><label>Model</label><select id="model">
-      <option value="finetuned">Fine-tuned (patty_v1)</option>
+      <option value="finetuned">Fine-tuned (production)</option>
       <option value="world">YOLO-World (zero-shot fallback)</option></select></div>
     <div><label>Resolution</label><select id="imgsz"><option>960</option><option>640</option></select></div>
-    <div><label>Conf threshold</label><input id="conf" type="number" step="0.01"></div>
+    <div><label>Birth conf</label><input id="conf" type="number" step="0.01"></div>
   </div>
-  <button id="saveCam">Save</button>
+  <button id="saveCam" style="margin-top:12px">Save</button>
   <div class="note">Camera/model changes apply after a pipeline restart.</div>
 </div>
+</div>
+</section>
 
-<div class="card"><h2>Patty &amp; griddle → target times</h2>
+<section id="targets"><h2>Cooking targets</h2>
+<div class="card" style="max-width:640px">
   <div class="row"><div><label>Units</label><select id="units">
-    <option value="imperial">inches / °F</option><option value="metric">cm / °C</option></select></div>
-    <div></div></div>
+    <option value="imperial">inches / °F</option><option value="metric">cm / °C</option></select></div><div></div></div>
   <div class="row">
     <div><label id="l_d">Diameter, in</label><input id="diameter" type="number" step="0.1"></div>
     <div><label id="l_h">Thickness, in</label><input id="thickness" type="number" step="0.05"></div>
@@ -91,8 +170,8 @@
     <div><label id="l_g">Griddle, °F</label><input id="griddle" type="number" step="5"></div>
     <div><label id="l_f">Freezer, °F</label><input id="freezer" type="number" step="1"></div>
   </div>
-  <button class="ghost" id="calc">Suggest target times</button>
-  <div class="rec" id="rec"></div>
+  <button class="ghost" id="calc" style="margin-top:12px">Suggest target times</button>
+  <div id="rec" style="margin-top:8px"></div>
   <div class="row">
     <div><label>Target side A, s</label><input id="target_a" type="number"></div>
     <div><label>Target side B, s</label><input id="target_b" type="number"></div>
@@ -101,11 +180,15 @@
     <div><label>Early tolerance, s</label><input id="tol_early" type="number"></div>
     <div><label>Late tolerance, s</label><input id="tol_late" type="number"></div>
   </div>
-  <button id="saveRec">Save targets</button>
-  <div class="note">⚠️ Suggestion is a v0 estimate for consistency, not food safety. Ground beef must reach 160°F / 71°C inside — verify with a thermometer.</div>
+  <button id="saveRec" style="margin-top:12px">Save targets</button>
+  <div class="note">⚠️ Suggestion is a v0 consistency estimate, not food safety.
+  Ground beef must reach 160°F / 71°C inside — verify with a thermometer.</div>
 </div>
+</section>
 
-<div class="card"><h2>Shifts</h2>
+<section id="shifts"><h2>Shifts</h2>
+<div class="grid2">
+<div class="card">
   <label>Cook (name or code — no full legal name needed)</label><input id="s_cook">
   <label>Days of week</label>
   <div id="s_days" class="days"></div>
@@ -113,27 +196,43 @@
     <div><label>From</label><input id="s_start" type="time"></div>
     <div><label>To</label><input id="s_end" type="time"></div>
   </div>
-  <button id="addShift">Add shift</button>
-  <table id="shifts"></table>
+  <button id="addShift" style="margin-top:12px">Add shift</button>
 </div>
+<div class="card"><table id="shifts_t"></table>
+  <div class="note">The active shift is highlighted; its cook is attributed to every event.</div></div>
+</div>
+</section>
 
-<div class="card" style="grid-column:1/-1"><h2>Events</h2>
-  <table id="events"></table>
+<section id="events"><h2>Event log</h2>
+<div class="card">
+  <div style="margin-bottom:10px">
+    <span class="chip fchip on" data-f="">All</span>
+    <span class="chip fchip" data-f="flip">🔄 Flips</span>
+    <span class="chip fchip" data-f="placed,removed">🟢⚪ Placed / removed</span>
+    <span class="chip fchip" data-f="scene_cut,invalidated">🎬 Resets</span>
+    <button class="ghost sm" style="float:right" onclick="location='/api/events.csv?period=7d'">⬇ Export CSV (7d)</button>
+  </div>
+  <table id="events_t"></table>
 </div>
+</section>
+
+<div class="note" style="margin-top:34px;text-align:center">
+  Grill Cook pilot · quality-consistency tool, not a food-safety device · ground beef: 160°F / 71°C internal
 </div>
+</main>
+
 <script>
 const $=id=>document.getElementById(id);
+async function j(u,opt){const r=await fetch(u,opt);return r.json();}
+const post=b=>j('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
 const CAM=['rtsp_url','model','imgsz','conf'];
 const NUMS=['target_a','target_b','tol_early','tol_late'];
-async function j(u,opt){const r=await fetch(u,opt);return r.json();}
-// ---- units ---------------------------------------------------------------
-const IN=2.54;
-const c2f=c=>c*9/5+32, f2c=f=>(f-32)*5/9;
+let meta={};
+// ---- units ----------------------------------------------------------------
+const IN=2.54,c2f=c=>c*9/5+32,f2c=f=>(f-32)*5/9;
 let U=localStorage.units||'imperial';
 let metric={diameter_cm:10,thickness_cm:1.2,griddle_c:190,freezer_c:-18};
-function paintUnits(){
-  const imp=U==='imperial';
-  $('units').value=U;
+function paintUnits(){const imp=U==='imperial';$('units').value=U;
   $('l_d').textContent='Diameter, '+(imp?'in':'cm');
   $('l_h').textContent='Thickness, '+(imp?'in':'cm');
   $('l_g').textContent='Griddle, '+(imp?'°F':'°C');
@@ -141,57 +240,68 @@ function paintUnits(){
   $('diameter').value=imp?+(metric.diameter_cm/IN).toFixed(2):metric.diameter_cm;
   $('thickness').value=imp?+(metric.thickness_cm/IN).toFixed(2):metric.thickness_cm;
   $('griddle').value=imp?Math.round(c2f(metric.griddle_c)):metric.griddle_c;
-  $('freezer').value=imp?Math.round(c2f(metric.freezer_c)):metric.freezer_c;
-}
-function readMetric(){
-  const imp=U==='imperial',v=id=>+$(id).value;
+  $('freezer').value=imp?Math.round(c2f(metric.freezer_c)):metric.freezer_c;}
+function readMetric(){const imp=U==='imperial',v=id=>+$(id).value;
   metric={diameter_cm:imp?+(v('diameter')*IN).toFixed(1):v('diameter'),
-          thickness_cm:imp?+(v('thickness')*IN).toFixed(2):v('thickness'),
-          griddle_c:imp?+f2c(v('griddle')).toFixed(0):v('griddle'),
-          freezer_c:imp?+f2c(v('freezer')).toFixed(0):v('freezer')};
-  return metric;
-}
+    thickness_cm:imp?+(v('thickness')*IN).toFixed(2):v('thickness'),
+    griddle_c:imp?+f2c(v('griddle')).toFixed(0):v('griddle'),
+    freezer_c:imp?+f2c(v('freezer')).toFixed(0):v('freezer')};return metric;}
 $('units').onchange=()=>{readMetric();U=$('units').value;localStorage.units=U;paintUnits();};
-// ---- settings ------------------------------------------------------------
-async function loadSettings(){const s=await j('/api/settings');
+// ---- settings -------------------------------------------------------------
+async function loadSettings(){const s=await j('/api/settings');meta=s;
   CAM.concat(NUMS).forEach(f=>{if($(f))$(f).value=s[f];});
   metric={diameter_cm:s.diameter_cm,thickness_cm:s.thickness_cm,griddle_c:s.griddle_c,freezer_c:s.freezer_c};
-  paintUnits();}
-const post=(b)=>j('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+  paintUnits();
+  $('loc').textContent='· '+(s._location||'');
+  const hud=location.origin+'/hud?v='+s._view_key;
+  $('hudlink').href=hud;
+  $('copyhud').onclick=()=>navigator.clipboard.writeText(hud).then(()=>$('copyhud').textContent='copied ✓');
+  const relay=s._relay_public||'rtsp://<relay>/cam';
+  const mk=(dev)=>`ffmpeg -f ${dev} -framerate 30 -video_size 1280x720 ${dev==='avfoundation'?'-i "0:none"':'-i video="Integrated Camera"'} \\
+  -pix_fmt yuv420p -c:v libx264 -preset veryfast -tune zerolatency \\
+  -g 30 -b:v 3M -an -f rtsp -rtsp_transport tcp ${relay}`;
+  for(const [id,dev] of [['cmd-mac','avfoundation'],['cmd-win','dshow']]){
+    const el=$(id);el.textContent=mk(dev);
+    const b=document.createElement('button');b.className='sm';b.textContent='copy';
+    b.onclick=()=>navigator.clipboard.writeText(el.textContent.replace(/copy$/,'')).then(()=>b.textContent='✓');
+    el.appendChild(b);}}
 $('saveCam').onclick=()=>{const b={};CAM.forEach(f=>{const v=$(f).value;b[f]=isNaN(+v)||v===''?v:+v;});
   post(b).then(()=>alert('Saved. Restart the pipeline to apply.'));};
 $('saveRec').onclick=()=>{const b={...readMetric()};NUMS.forEach(f=>b[f]=+$(f).value);
   post(b).then(()=>alert('Targets saved (applied immediately).'));};
 $('calc').onclick=async()=>{const m=readMetric();
   const r=await j(`/api/recommend?d=${m.diameter_cm}&h=${m.thickness_cm}&tg=${m.griddle_c}&tf=${m.freezer_c}`);
-  $('rec').innerHTML=`Suggested: <b>A ${r.side_a}s</b> · <b>B ${r.side_b}s</b> <button class="ghost" style="margin:0 0 0 8px;padding:3px 10px" onclick="applyRec(${r.side_a},${r.side_b})">apply</button><div class="note">${r.note}</div>`;};
+  $('rec').innerHTML=`Suggested: <b>A ${r.side_a}s</b> · <b>B ${r.side_b}s</b>
+   <button class="ghost sm" onclick="applyRec(${r.side_a},${r.side_b})">apply</button>
+   <div class="note">${r.note}</div>`;};
 window.applyRec=(a,b)=>{$('target_a').value=a;$('target_b').value=b;};
-// ---- pipeline / status ---------------------------------------------------
+// ---- pipeline / status ----------------------------------------------------
 let running=false;
 $('toggle').onclick=async()=>{$('toggle').disabled=true;
   await j('/api/pipeline/'+(running?'stop':'start'),{method:'POST'});
   setTimeout(()=>{$('toggle').disabled=false;refreshStatus();},600);};
-function paintToggle(){const b=$('toggle');
-  b.textContent=running?'■ Stop':'▶ Start';
-  b.className=running?'stop':'';}
 const STREAM={ok:'live',"no stream":'waiting for camera…',reconnecting:'reconnecting…'};
+let roiMode=false;
 async function refreshStatus(){const s=await j('/api/status');
-  running=!!s.running;paintToggle();
-  const chips=[];
-  chips.push(`<span class="chip">state <b style="color:${s.running?'var(--ok)':'var(--bad)'}">${s.running?'running':'stopped'}</b></span>`);
-  if('agent_connected' in s)chips.push(`<span class="chip">edge <b style="color:${s.agent_connected?'var(--ok)':'var(--bad)'}">${s.agent_connected?'online':'offline'}</b></span>`);
-  if(s.running){chips.push(`<span class="chip">stream <b>${STREAM[s.stream]||s.stream||'…'}</b></span>`,
-    `<span class="chip">camera <b>${s.source_fps||0}</b> fps</span>`,
-    `<span class="chip">processing <b>${s.processed_fps||0}</b> fps</span>`,
-    `<span class="chip">inference <b>${s.detect_ms||0}</b> ms</span>`);
-    if(s.outside_roi)chips.push(`<span class="chip" style="border-color:var(--warn)">⚠ outside zone <b style="color:var(--warn)">${s.outside_roi}</b></span>`);}
-  if(s.shift)chips.push(`<span class="chip">shift <b>${s.shift.cook}</b></span>`);
-  $('status').innerHTML=chips.join('');
-  $('preview').style.display=(s.running||roiMode)?'block':'none';
-  if(s.running&&!roiMode)$('preview').src='/preview.jpg?t='+Date.now();}
-// ---- grill zone (ROI) editor ---------------------------------------------
-let roiMode=false,roiPts=[];
-const cv=$('roiCv');
+  running=!!s.running;
+  $('toggle').textContent=running?'■ Stop':'▶ Start';
+  $('toggle').className=running?'stop':'';
+  $('d-edge').className='dot'+(s.agent_connected?' on':'');
+  $('d-cam').className='dot'+(running&&s.stream==='ok'?' on':'');
+  $('d-fps').textContent=running&&s.processed_fps?s.processed_fps+' fps':'';
+  const c=[];
+  c.push(`<span class="chip">state <b style="color:${running?'var(--ok)':'var(--bad)'}">${running?'running':'stopped'}</b></span>`);
+  if(running){c.push(`<span class="chip">stream <b>${STREAM[s.stream]||s.stream||'…'}</b></span>`,
+    `<span class="chip num">camera <b>${s.source_fps||0}</b> fps</span>`,
+    `<span class="chip num">processing <b>${s.processed_fps||0}</b> fps</span>`,
+    `<span class="chip num">inference <b>${s.detect_ms||0}</b> ms</span>`);
+    if(s.outside_roi)c.push(`<span class="chip" style="border-color:var(--warn)">⚠ outside zone <b style="color:var(--warn)">${s.outside_roi}</b></span>`);}
+  if(s.shift)c.push(`<span class="chip">shift <b>${s.shift.cook}</b></span>`);
+  $('live-chips').innerHTML=c.join('');
+  $('preview').style.display=(running||roiMode)?'block':'none';
+  if(running&&!roiMode)$('preview').src='/preview.jpg?t='+Date.now();}
+// ---- ROI editor -----------------------------------------------------------
+let roiPts=[];const cv=$('roiCv');
 function roiDraw(){const img=$('preview'),w=img.clientWidth,h=img.clientHeight;
   if(!w)return;cv.width=w;cv.height=h;const g=cv.getContext('2d');
   g.clearRect(0,0,w,h);if(!roiPts.length)return;
@@ -200,8 +310,7 @@ function roiDraw(){const img=$('preview'),w=img.clientWidth,h=img.clientHeight;
   g.fillStyle='rgba(80,220,90,0.15)';g.fill();
   g.strokeStyle='#50dc5a';g.lineWidth=2;g.stroke();
   g.fillStyle='#50dc5a';roiPts.forEach(p=>{g.beginPath();g.arc(p[0]*w,p[1]*h,4,0,7);g.fill();});}
-$('roiEdit').onclick=async()=>{
-  roiMode=!roiMode;
+$('roiEdit').onclick=async()=>{roiMode=!roiMode;
   $('roiEdit').textContent=roiMode?'✕ Cancel':'✏️ Edit grill zone';
   $('roiSave').style.display=roiMode?'':'none';
   $('roiClear').style.display=roiMode?'':'none';
@@ -209,70 +318,106 @@ $('roiEdit').onclick=async()=>{
   if(roiMode){const st=await j('/api/settings');roiPts=(st.roi||[]).slice();
     $('preview').style.display='block';
     $('preview').src='/still.jpg?t='+Date.now();
-    $('preview').onload=roiDraw;setTimeout(roiDraw,300);}
-};
+    $('preview').onload=roiDraw;setTimeout(roiDraw,300);}};
 cv.onclick=e=>{if(!roiMode)return;const r=cv.getBoundingClientRect();
-  roiPts.push([+( (e.clientX-r.left)/r.width ).toFixed(4),+(((e.clientY-r.top))/r.height).toFixed(4)]);
+  roiPts.push([+(((e.clientX-r.left))/r.width).toFixed(4),+(((e.clientY-r.top))/r.height).toFixed(4)]);
   roiDraw();};
 $('roiSave').onclick=async()=>{
   if(roiPts.length&&roiPts.length<3)return alert('A zone needs at least 3 points.');
   await post({roi:roiPts});$('roiEdit').onclick();alert('Zone saved — applies live.');};
 $('roiClear').onclick=()=>{roiPts=[];roiDraw();};
-// ---- shifts / events -----------------------------------------------------
+// ---- analytics ------------------------------------------------------------
+let period='today';
+document.querySelectorAll('.pbtn').forEach(b=>b.onclick=()=>{period=b.dataset.p;refreshAnalytics();});
+const kpi=(l,v,c)=>`<div class="kpi"><div class="v num"${c?` style="color:${c}"`:''}>${v}</div><div class="l">${l}</div></div>`;
+async function refreshAnalytics(){const a=await j('/api/analytics?period='+period);
+  document.querySelectorAll('.pbtn').forEach(b=>b.classList.toggle('act',b.dataset.p===period));
+  const k=[];
+  k.push(kpi('completed',a.done));
+  if(a.compliance!=null){const c=a.compliance>=80?'var(--ok)':a.compliance>=50?'var(--warn)':'var(--bad)';
+    k.push(kpi('compliance',a.compliance+'%',c));}
+  if(a.side_a)k.push(kpi('side A avg',a.side_a.avg+'s'));
+  if(a.side_b)k.push(kpi('side B avg',a.side_b.avg+'s'));
+  if(a.flips&&a.flips.on_time_pct!=null)k.push(kpi('flips on-time',a.flips.on_time_pct+'%'));
+  if(a.verdicts)k.push(kpi('⚠ under / ⛔ over',`${a.verdicts.under} / ${a.verdicts.over}`));
+  if(a.resets)k.push(kpi('view resets',a.resets));
+  $('kpi').innerHTML=k.join('')||'<span class="note">no completed patties yet</span>';
+  // hour bars
+  const H=96,W=$('hours').clientWidth||480,bw=W/24;
+  const mx=Math.max(1,...a.hours.map(h=>h.n));
+  $('hours').setAttribute('width',W);
+  $('hours').innerHTML=a.hours.map((h,i)=>{
+    if(!h.n)return `<rect x="${i*bw+1}" y="${H-16}" width="${bw-2}" height="1" fill="var(--line)"/>`;
+    const pct=100*h.ok/h.n,c=pct>=80?'var(--ok)':pct>=50?'var(--warn)':'var(--bad)';
+    const bh=Math.max(3,(H-30)*h.n/mx);
+    return `<rect x="${i*bw+1}" y="${H-16-bh}" width="${bw-2}" height="${bh}" rx="2" fill="${c}"><title>${String(i).padStart(2,'0')}:00 — ${h.n} pc, ${Math.round(pct)}% ok</title></rect>`;
+  }).join('')+a.hours.map((h,i)=>i%6?'':`<text x="${i*bw+1}" y="${H-4}" font-size="9" fill="var(--dim)">${String(i).padStart(2,'0')}</text>`).join('');
+  // 7-day trend
+  const dW=$('daysvg').clientWidth||300,dbw=dW/7;
+  const dmx=Math.max(1,...(a.days||[]).map(d=>d.done));
+  $('daysvg').setAttribute('width',dW);
+  $('daysvg').innerHTML=(a.days||[]).map((d,i)=>{
+    const c=d.ok_pct==null?'var(--line)':d.ok_pct>=80?'var(--ok)':d.ok_pct>=50?'var(--warn)':'var(--bad)';
+    const bh=Math.max(2,(96-30)*d.done/dmx);
+    return `<rect x="${i*dbw+3}" y="${96-16-bh}" width="${dbw-6}" height="${bh}" rx="2" fill="${c}"><title>${d.label}: ${d.done} pc${d.ok_pct!=null?', '+d.ok_pct+'% ok':''}</title></rect>
+      <text x="${i*dbw+dbw/2}" y="92" font-size="9" text-anchor="middle" fill="var(--dim)">${d.label.split(' ')[0]}</text>`;
+  }).join('');
+  $('cooks').innerHTML='<tr><th>cook</th><th>done</th><th>ok %</th><th>avg A</th><th>avg B</th></tr>'+
+    (a.cooks||[]).map(c=>{const col=c.compliance>=80?'var(--ok)':c.compliance>=50?'var(--warn)':'var(--bad)';
+      return `<tr><td>${c.cook}</td><td class="num">${c.done}</td><td class="num" style="color:${col}">${c.compliance}%</td><td class="num">${c.avg_a}s</td><td class="num">${c.avg_b}s</td></tr>`;}).join('')
+    ||'<tr><td class="note">no data</td></tr>';}
+// ---- health strip ---------------------------------------------------------
+async function refreshHealth(){const h=await j('/api/history');
+  const W=$('healthbar').clientWidth||900,n=Math.max(h.length,1),bw=W/2880;
+  $('healthbar').setAttribute('width',W);
+  $('healthbar').innerHTML=h.map((p,i)=>{
+    const c=!p.a?'var(--bad)':(p.s?'var(--ok)':'var(--warn)');
+    const x=W-(h.length-i)*bw;
+    return `<rect x="${x}" y="2" width="${Math.max(bw,0.5)}" height="14" fill="${c}"/>`;}).join('')
+    ||'';}
+// ---- shifts ---------------------------------------------------------------
 const DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 let selDays=new Set([0,1,2,3,4]);
 function paintDays(){$('s_days').innerHTML=DAYS.map((d,i)=>
   `<span class="${selDays.has(i)?'on':''}" onclick="tglDay(${i})">${d}</span>`).join('');}
 window.tglDay=i=>{selDays.has(i)?selDays.delete(i):selDays.add(i);paintDays();};
 paintDays();
+function nowActive(s){const d=(new Date().getDay()+6)%7;
+  const hm=new Date().toTimeString().slice(0,5);
+  return (s.days||[]).includes(d)&&s.start<=hm&&hm<=s.end;}
 async function refreshShifts(){const list=await j('/api/shifts');
-  $('shifts').innerHTML='<tr><th>cook</th><th>days</th><th>hours</th><th></th></tr>'+
-   list.map((s,i)=>`<tr><td>${s.cook}</td><td>${(s.days||[]).map(d=>DAYS[d]).join(', ')}</td><td>${s.start}–${s.end}</td>
-   <td><a href="#" onclick="delShift(${i});return false">✕</a></td></tr>`).join('');}
+  $('shifts_t').innerHTML='<tr><th>cook</th><th>days</th><th>hours</th><th></th></tr>'+
+   list.map((s,i)=>`<tr class="${nowActive(s)?'shift-active':''}"><td>${s.cook}</td>
+    <td>${(s.days||[]).map(d=>DAYS[d]).join(', ')}</td><td class="num">${s.start}–${s.end}</td>
+    <td><a href="#" onclick="delShift(${i});return false">✕</a></td></tr>`).join('')
+   ||'<tr><td class="note">no shifts yet</td></tr>';window._shifts=list;}
 window.delShift=i=>j('/api/shifts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({delete:i})}).then(refreshShifts);
 $('addShift').onclick=()=>{
   if(!$('s_cook').value||!selDays.size||!$('s_start').value||!$('s_end').value)return alert('Fill cook, days and hours.');
+  const st=$('s_start').value,en=$('s_end').value;
+  const clash=(window._shifts||[]).find(s=>(s.days||[]).some(d=>selDays.has(d))&&!(en<=s.start||st>=s.end));
+  if(clash&&!confirm(`Overlaps with ${clash.cook} (${clash.start}–${clash.end}). Add anyway?`))return;
   j('/api/shifts',{method:'POST',headers:{'Content-Type':'application/json'},
-   body:JSON.stringify({cook:$('s_cook').value,days:[...selDays],start:$('s_start').value,end:$('s_end').value})}).then(refreshShifts);};
-async function refreshEvents(){const evs=await j('/api/events?limit=50');
+   body:JSON.stringify({cook:$('s_cook').value,days:[...selDays],start:st,end:en})}).then(refreshShifts);};
+// ---- events ---------------------------------------------------------------
+let evFilter='';
+document.querySelectorAll('.fchip').forEach(c=>c.onclick=()=>{
+  document.querySelectorAll('.fchip').forEach(x=>x.classList.remove('on'));
+  c.classList.add('on');evFilter=c.dataset.f;renderEvents();});
+let evCache=[];
+async function refreshEvents(){evCache=await j('/api/events?limit=200');renderEvents();}
+function renderEvents(){
   const names={placed:'🟢 placed',flip:'🔄 flip',removed:'⚪ removed',scene_cut:'🎬 scene change',invalidated:'✂️ invalidated'};
   const grades={optimal:'<span class="g-optimal">✔ on time</span>',early:'<span class="g-early">⚠ early</span>',late:'<span class="g-late">⛔ late</span>'};
-  $('events').innerHTML='<tr><th>time</th><th>event</th><th>#</th><th>side</th><th>grade</th><th>A, s</th><th>B, s</th></tr>'+
-   evs.map(e=>`<tr><td>${new Date(e.ts*1000).toLocaleTimeString()}</td>
-    <td class="ev-${e.type}">${names[e.type]||e.type}</td><td>${e.pid??''}</td><td>${e.side}</td>
-    <td>${e.grade?grades[e.grade]:''}</td><td>${e.side_a}</td><td>${e.side_b}</td></tr>`).join('');}
-// ---- analytics -----------------------------------------------------------
-let period='today';
-document.querySelectorAll('.pbtn').forEach(b=>b.onclick=()=>{period=b.dataset.p;refreshAnalytics();});
-function chip(label,val,color){return `<span class="chip">${label} <b${color?` style="color:${color}"`:''}>${val}</b></span>`;}
-async function refreshAnalytics(){
-  const a=await j('/api/analytics?period='+period);
-  document.querySelectorAll('.pbtn').forEach(b=>b.style.opacity=b.dataset.p===period?1:0.45);
-  const k=[];
-  k.push(chip('completed',a.done));
-  if(a.compliance!=null){const c=a.compliance>=80?'var(--ok)':a.compliance>=50?'var(--warn)':'var(--bad)';
-    k.push(chip('compliance',a.compliance+'%',c));
-    k.push(chip('✔ ok',a.verdicts.ok,'var(--ok)'),chip('⚠ under',a.verdicts.under,'var(--warn)'),chip('⛔ over',a.verdicts.over,'var(--bad)'));}
-  if(a.side_a)k.push(chip('side A avg',a.side_a.avg+'s ± '+a.side_a.sd));
-  if(a.side_b)k.push(chip('side B avg',a.side_b.avg+'s ± '+a.side_b.sd));
-  if(a.total)k.push(chip('full cook',a.total.avg+'s'));
-  if(a.flips.on_time_pct!=null)k.push(chip('flips on-time',a.flips.on_time_pct+'%'));
-  if(a.resets)k.push(chip('view resets',a.resets));
-  document.getElementById('kpi').innerHTML=k.join('')||'<span class="chip">no completed patties in this period</span>';
-  // hour bars
-  const H=90,W=document.getElementById('hours').clientWidth||600,bw=W/24;
-  const mx=Math.max(1,...a.hours.map(h=>h.n));
-  document.getElementById('hours').innerHTML=a.hours.map((h,i)=>{
-    if(!h.n)return `<rect x="${i*bw+1}" y="${H-14}" width="${bw-2}" height="1" fill="var(--line)"></rect>`;
-    const pct=100*h.ok/h.n,c=pct>=80?'var(--ok)':pct>=50?'var(--warn)':'var(--bad)';
-    const bh=Math.max(3,(H-26)*h.n/mx);
-    return `<rect x="${i*bw+1}" y="${H-14-bh}" width="${bw-2}" height="${bh}" rx="2" fill="${c}"><title>${String(i).padStart(2,'0')}:00 — ${h.n} pc, ${Math.round(pct)}% ok</title></rect>`;
-  }).join('')+a.hours.map((h,i)=>i%6?'':`<text x="${i*bw+1}" y="${H-2}" font-size="9" fill="var(--dim)">${String(i).padStart(2,'0')}</text>`).join('');
-  document.getElementById('cooks').innerHTML='<tr><th>cook</th><th>done</th><th>ok %</th><th>avg A</th><th>avg B</th></tr>'+
-    a.cooks.map(c=>{const col=c.compliance>=80?'var(--ok)':c.compliance>=50?'var(--warn)':'var(--bad)';
-      return `<tr><td>${c.cook}</td><td>${c.done}</td><td style="color:${col}">${c.compliance}%</td><td>${c.avg_a}s</td><td>${c.avg_b}s</td></tr>`;}).join('')
-    ||'<tr><td class="note">no data</td></tr>';
-}
-loadSettings();refreshShifts();refreshEvents();refreshStatus();refreshAnalytics();
-setInterval(refreshStatus,1500);setInterval(refreshEvents,5000);setInterval(refreshAnalytics,10000);
+  const fl=evFilter?evFilter.split(','):null;
+  const rows=evCache.filter(e=>!fl||fl.includes(e.type)).slice(0,80);
+  $('events_t').innerHTML='<tr><th>time</th><th>event</th><th>#</th><th>side</th><th>grade</th><th>A, s</th><th>B, s</th></tr>'+
+   rows.map(e=>`<tr><td class="num">${new Date(e.ts*1000).toLocaleTimeString()}</td>
+    <td class="ev-${e.type}">${names[e.type]||e.type}</td><td class="num">${e.pid??''}</td><td>${e.side??''}</td>
+    <td>${e.grade?grades[e.grade]:''}</td><td class="num">${e.side_a??''}</td><td class="num">${e.side_b??''}</td></tr>`).join('')
+   ||'<tr><td class="note">no events</td></tr>';}
+// ---- boot -----------------------------------------------------------------
+loadSettings();refreshShifts();refreshEvents();refreshStatus();refreshAnalytics();refreshHealth();
+setInterval(refreshStatus,1500);setInterval(refreshEvents,5000);
+setInterval(refreshAnalytics,10000);setInterval(refreshHealth,60000);
 </script></body></html>

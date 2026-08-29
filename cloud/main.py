@@ -22,7 +22,10 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 
 ROOT = Path(__file__).resolve().parent
 ADMIN_KEY = os.environ.get("ADMIN_KEY", "dev")
+VIEW_KEY = os.environ.get("VIEW_KEY", ADMIN_KEY)   # cook tablet: read-only surfaces
 AGENT_TOKEN = os.environ.get("AGENT_TOKEN", "dev")
+RELAY_PUBLIC = os.environ.get("RELAY_PUBLIC", "")
+LOCATION_NAME = os.environ.get("LOCATION_NAME", "Pilot Kitchen")
 
 DEFAULTS = {
     "rtsp_url": "", "model": "finetuned", "imgsz": 960, "conf": 0.25,
@@ -46,22 +49,56 @@ app = FastAPI()
 
 
 # ---- auth ------------------------------------------------------------------
-def authed(request: Request) -> bool:
-    return (request.query_params.get("k") == ADMIN_KEY
-            or request.cookies.get("gk") == ADMIN_KEY)
+VIEW_PATHS = {"/hud", "/preview.jpg"}
+
+
+def role_of(request: Request) -> str | None:
+    if (request.query_params.get("k") == ADMIN_KEY
+            or request.cookies.get("gk") == ADMIN_KEY):
+        return "admin"
+    if (request.query_params.get("v") == VIEW_KEY
+            or request.cookies.get("gv") == VIEW_KEY):
+        return "view"
+    return None
 
 
 @app.middleware("http")
 async def gate(request: Request, call_next):
     if request.url.path == "/health":
         return await call_next(request)
-    if not authed(request):
-        return HTMLResponse("<h3>Access key required — open the link with ?k=…</h3>",
+    role = role_of(request)
+    if role is None:
+        return HTMLResponse("<h3>Access key required — open the link you were given.</h3>",
                             status_code=401)
+    if role == "view" and request.url.path not in VIEW_PATHS:
+        return HTMLResponse("<h3>This link opens the cook display only.</h3>",
+                            status_code=403)
     resp = await call_next(request)
     if request.query_params.get("k") == ADMIN_KEY:
         resp.set_cookie("gk", ADMIN_KEY, max_age=7 * 86400, httponly=False)
+    if request.query_params.get("v") == VIEW_KEY:
+        resp.set_cookie("gv", VIEW_KEY, max_age=30 * 86400, httponly=False)
     return resp
+
+
+history: deque = deque(maxlen=2880)          # 24h of 30s health samples
+
+
+@app.on_event("startup")
+async def _start_health_sampler():
+    async def _health_sampler():
+        while True:
+            st = agent_state.get("status", {})
+            history.append({"t": int(time.time()), "a": agent_connected(),
+                            "s": bool(agent_state.get("running")) and st.get("stream") == "ok",
+                            "r": bool(agent_state.get("running"))})
+            await asyncio.sleep(30)
+    asyncio.get_event_loop().create_task(_health_sampler())
+
+
+@app.get("/api/history")
+def get_history():
+    return list(history)
 
 
 @app.get("/health")
@@ -127,7 +164,8 @@ def preview_jpg():
 # ---- REST ------------------------------------------------------------------
 @app.get("/api/settings")
 def get_settings():
-    return settings
+    return {**settings, "_relay_public": RELAY_PUBLIC, "_location": LOCATION_NAME,
+            "_view_key": VIEW_KEY}
 
 
 @app.post("/api/settings")
@@ -253,8 +291,18 @@ def analytics(period: str = "today"):
         if f.get("grade") in grades:
             grades[f["grade"]] += 1
 
+    day_rows = []
+    for back in range(6, -1, -1):
+        d0 = day_start - back * 86400
+        d1 = d0 + 86400
+        dd = [e for e in events if d0 <= e["ts"] < d1 and e["type"] == "removed"]
+        ok_n = sum(1 for e in dd if verdict(e) == "ok")
+        day_rows.append({"label": time.strftime("%a %d", time.localtime(d0)),
+                         "done": len(dd),
+                         "ok_pct": round(100 * ok_n / len(dd), 0) if dd else None})
+
     return {
-        "period": period, "done": len(done),
+        "period": period, "done": len(done), "days": day_rows,
         "compliance": round(100 * verdicts["ok"] / len(done), 1) if done else None,
         "verdicts": verdicts,
         "side_a": stats([e["side_a"] for e in done]),
@@ -272,6 +320,25 @@ def analytics(period: str = "today"):
                   for k, v in sorted(cooks.items(), key=lambda x: -x[1]["done"])],
         "targets": {"a": ta, "b": tb, "tol_early": tol_e, "tol_late": tol_l},
     }
+
+
+@app.get("/api/events.csv")
+def events_csv(period: str = "all"):
+    now = time.time()
+    lt = time.localtime(now)
+    day_start = now - (lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec)
+    since = {"today": day_start, "7d": now - 7 * 86400, "all": 0.0}.get(period, 0.0)
+    lines = ["time,type,patty,side,grade,side_a_s,side_b_s,target_a,target_b,cook"]
+    for e in events:
+        if e["ts"] < since:
+            continue
+        lines.append(",".join(str(x) for x in (
+            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(e["ts"])),
+            e.get("type", ""), e.get("pid", ""), e.get("side", ""),
+            e.get("grade", ""), e.get("side_a", ""), e.get("side_b", ""),
+            e.get("ta", ""), e.get("tb", ""), cook_for_ts(e["ts"]))))
+    return Response("\n".join(lines), media_type="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=grill-events.csv"})
 
 
 @app.get("/api/events")
