@@ -18,6 +18,51 @@ from pathlib import Path
 EVENTS = Path(__file__).parent / "state" / "events.jsonl"
 
 
+class KF:
+    """Steady-state Kalman (alpha-beta) over the normalized centre.
+
+    Patties are static until a spatula shoves them. Velocity must learn a real
+    slide yet stay dead to box jitter — innovations inside the deadband update
+    only the position, and speed is clamped to what a spatula can plausibly do.
+    Anything cleverer turns detector noise into motion (measured: jitter of
+    0.1r random-walked velocity to 1.6 r/s and shredded the tracker).
+    """
+
+    TAU = 1.2            # seconds of velocity memory while coasting
+    ALPHA = 0.5          # position: split the difference with the measurement
+    BETA = 0.18          # velocity: learn slowly
+    DEAD = 0.006         # ~0.15 r of box jitter is noise, not motion
+    VMAX = 0.20          # a spatula slide peaks around 4-5 r/s; cap below chaos
+
+    def __init__(self, x: float, y: float, t: float):
+        self.x = [x, y, 0.0, 0.0]
+        self.t = t
+
+    def peek(self, now: float):
+        """Predicted position without mutating state."""
+        dt = max(0.0, min(now - self.t, 2.0))
+        damp = math.exp(-dt / self.TAU)
+        return (self.x[0] + self.x[2] * damp * dt,
+                self.x[1] + self.x[3] * damp * dt)
+
+    def update(self, mx: float, my: float, now: float):
+        dt = max(0.05, min(now - self.t, 2.0))
+        damp = math.exp(-dt / self.TAU)
+        out = []
+        for pos, vel, m in ((self.x[0], self.x[2], mx), (self.x[1], self.x[3], my)):
+            pred = pos + vel * damp * dt
+            inn = m - pred
+            new_pos = pred + self.ALPHA * inn
+            new_vel = vel * damp
+            if abs(inn) > self.DEAD:
+                step = inn - math.copysign(self.DEAD, inn)
+                new_vel += self.BETA * step / dt
+            new_vel = max(-self.VMAX, min(self.VMAX, new_vel))
+            out += [new_pos, new_vel]
+        self.x = [out[0], out[2], out[1], out[3]]
+        self.t = now
+
+
 def _lab_dist(a, b) -> float:
     return math.dist(a, b) if a is not None and b is not None else 0.0
 
@@ -39,6 +84,7 @@ class LivePatty:
     bonus: float = 0.0            # early-flip shortfall carried onto the new side
     flip_feedback: str | None = None       # optimal | early | late, for the HUD
     lab: tuple | None = None               # mean colour, for identity across gaps
+    kf: KF | None = None
 
     def elapsed(self, now: float) -> float:
         if self.missing_since is not None:
@@ -51,7 +97,7 @@ class TimerEngine:
                  flip_cooldown=30.0, min_side_before_flip=25.0, assoc_frac=1.6,
                  birth_conf=0.30, gate_base=1.45, gate_max=2.6, size_gate=1.55,
                  colour_scale=26.0, revive_window=60.0, revive_colour=22.0,
-                 overlap_frac=0.55):
+                 overlap_frac=0.55, use_kf=False, birth_suppress=1.2):
         self.targets = targets                  # {"A": s, "B": s, "tol_early": s, "tol_late": s}
         self.flip_gap_min = flip_gap_min
         self.removed_after = removed_after
@@ -74,6 +120,11 @@ class TimerEngine:
         self.revived = 0
         self.overlap_frac = overlap_frac
         self.merged = 0
+        # KF-assisted association tripled track life offline but costs identity
+        # correctness on dense layouts (teleports 9, undercount 14/16); stays a
+        # research flag until it wins on labeled MOT ground truth.
+        self.use_kf = use_kf
+        self.birth_suppress = birth_suppress
         self.alive: dict[int, LivePatty] = {}
         self.done: list[dict] = []
         self.next_pid = 1
@@ -139,7 +190,8 @@ class TimerEngine:
         """Match cost for one track/detection pair, or None if impossible."""
         cx, cy, r, _cf, lab = det
         ref = max((p.r + r) / 2, 1e-6)
-        dist = math.hypot(cx - p.cx, cy - p.cy) / ref
+        ex, ey = p.kf.peek(now) if (self.use_kf and p.kf) else (p.cx, p.cy)
+        dist = math.hypot(cx - ex, cy - ey) / ref
         gap = 0.0 if p.missing_since is None else now - p.missing_since
         # the gate widens only for a track that has been missing — the cook may
         # have slid that one; everyone else stays pinned to their spot
@@ -257,8 +309,14 @@ class TimerEngine:
                 if lab:
                     p.lab = lab if not p.lab else tuple(
                         0.85 * o + 0.15 * n for o, n in zip(p.lab, lab))
-                p.cx = 0.7 * p.cx + 0.3 * cx
-                p.cy = 0.7 * p.cy + 0.3 * cy
+                if p.kf is None:
+                    p.kf = KF(cx, cy, now)
+                p.kf.update(cx, cy, now)
+                if self.use_kf:
+                    p.cx, p.cy = p.kf.x[0], p.kf.x[1]
+                else:
+                    p.cx = 0.7 * p.cx + 0.3 * cx
+                    p.cy = 0.7 * p.cy + 0.3 * cy
                 p.r = 0.8 * p.r + 0.2 * r
                 self._on_return(p, now)
                 p.last_seen = now
@@ -274,8 +332,14 @@ class TimerEngine:
             cx, cy, r, cf, lab = det
             if i in used or cf < self.birth_conf:
                 continue
-            # ignore rebirth right on top of an existing patty
-            if any(math.hypot(cx - q.cx, cy - q.cy) < 1.2 * q.r for q in self.alive.values()):
+            # no births inside an existing track's reach: a detection that
+            # missed its gate by a hair must wait for the track to catch up
+            # (the Kalman prediction closes that distance next frame), not
+            # mint a duplicate id. Touching neighbours sit 2r apart — safe.
+            def near(q):
+                qx, qy = q.kf.peek(now) if (self.use_kf and q.kf) else (q.cx, q.cy)
+                return math.hypot(cx - qx, cy - qy) < self.birth_suppress * max(q.r, r)
+            if any(near(q) for q in self.alive.values()):
                 continue
             revived = self._revive(det, now)
             if revived is not None:
@@ -286,7 +350,8 @@ class TimerEngine:
                 self._emit("revived", revived)
                 continue
             p = LivePatty(self.next_pid, cx, cy, r, placed_ts=now,
-                          side_started=now, last_seen=now, lab=lab)
+                          side_started=now, last_seen=now, lab=lab,
+                          kf=KF(cx, cy, now))
             self.next_pid += 1
             self.alive[p.pid] = p
             self._emit("placed", p)
@@ -323,6 +388,11 @@ class TimerEngine:
             for j in range(i + 1, len(alive)):
                 a, b = alive[i], alive[j]
                 if a.pid in doomed or b.pid in doomed:
+                    continue
+                # two tracks each holding their own detection this frame are two
+                # real patties no matter how close the filter drew them — the
+                # merge is for ghosts parked on top of a live track
+                if a.last_seen == now and b.last_seen == now:
                     continue
                 if math.hypot(a.cx - b.cx, a.cy - b.cy) < self.overlap_frac * (a.r + b.r):
                     a_vis = a.missing_since is None

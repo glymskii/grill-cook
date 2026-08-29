@@ -66,7 +66,9 @@ def report(name: str, eng, alive_counts):
     print(f"  всего id создано:        {eng.next_pid - 1}")
     print(f"  обрывков (<5с жизни):    {len(frags)} ({100*len(frags)/max(len(lives),1):.0f}%)")
     print(f"  медиана жизни трека:     {st.median(lives):.0f}с" if lives else "")
-    print(f"  медиана котлет в кадре:  {st.median(alive_counts):.0f}")
+    tot = [a for a, _ in alive_counts]
+    vis = [v for _, v in alive_counts]
+    print(f"  медиана треков (всех/видимых):  {st.median(tot):.0f} / {st.median(vis):.0f}")
     if hasattr(eng, "revived"):
         print(f"  воскрешений:             {eng.revived}")
     if hasattr(eng, "merged"):
@@ -90,10 +92,13 @@ def main():
     timers_new.EVENTS = Path(tempfile.mkdtemp()) / "events.jsonl"
 
     T = {"A": 120, "B": 90, "tol_early": 30, "tol_late": 30}
+    v2 = load_old("/tmp/timers_v2.py")     # вчерашняя версия: венгр без КФ
     engines = [
-        ("БЫЛО (жадная, гейт 3.2r)", old_mod.TimerEngine(dict(T))),
-        ("СТАЛО (гейт 1.15r)", timers_new.TimerEngine(dict(T))),
-        ("СТАЛО (гейт 1.45r)", timers_new.TimerEngine(dict(T), gate_base=1.45)),
+        ("ЖАДНАЯ (исходная)", old_mod.TimerEngine(dict(T))),
+        ("ВЕНГР (вчера, прод)", v2.TimerEngine(dict(T))),
+        ("ЯДРО: венгр + физика (кандидат)", timers_new.TimerEngine(dict(T))),
+        ("ИССЛЕД.: + КФ (флаг)", timers_new.TimerEngine(dict(T), use_kf=True,
+                                                        birth_suppress=1.55)),
     ]
     churns = [Churn() for _ in engines]
     alives = [[] for _ in engines]
@@ -131,9 +136,11 @@ def main():
         if roi:
             dets = [d for d in dets if in_poly(d[0], d[1], roi)]
         for k, (name, eng) in enumerate(engines):
-            eng.update([d[:4] for d in dets] if k == 0 else dets, t)
+            eng.update([d[:4] for d in dets] if k == 0 else list(dets), t)
             churns[k].feed(eng)
-            alives[k].append(len(eng.alive))
+            alives[k].append((len(eng.alive),
+                              sum(1 for q in eng.alive.values()
+                                  if q.missing_since is None)))
         idx += 1
         if idx % (step * 400) == 0:
             print(f"  {t/60:.1f} / {total/src_fps/60:.1f} мин", flush=True)
