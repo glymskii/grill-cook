@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "app"))
 
 from config import Config              # noqa: E402
-from pipeline import in_poly, size_gate  # noqa: E402
+from pipeline import in_poly, lab_of, size_gate  # noqa: E402
 from timers import TimerEngine         # noqa: E402
 
 
@@ -76,7 +76,8 @@ def main():
                     continue
                 if max(w, h) / max(fw, fh) > cfg.max_size_frac:
                     continue
-                dets.append(((x1 + x2) / 2 / fw, (y1 + y2) / 2 / fh, (w + h) / 4 / fw, cf))
+                dets.append(((x1 + x2) / 2 / fw, (y1 + y2) / 2 / fh,
+                             (w + h) / 4 / fw, cf, lab_of(frame, x1, y1, x2, y2)))
         dets, _ = size_gate(dets, radii)
         if len(roi) >= 3:
             dets = [d for d in dets if in_poly(d[0], d[1], roi)]

@@ -16,6 +16,40 @@ ROOT = Path(__file__).resolve().parent.parent
 BEST = ROOT / "runs/detect/runs/detect/patty_v6/weights/best.pt"
 
 
+def lab_of(frame, x1, y1, x2, y2):
+    """Mean Lab colour of the patty's middle — its identity across occlusions.
+
+    Only the central 60% is sampled: the rim blends into the griddle and would
+    drag every patty's colour toward the same grey.
+    """
+    fh, fw = frame.shape[:2]
+    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+    hw, hh = (x2 - x1) * 0.3, (y2 - y1) * 0.3
+    a_, b_ = max(0, int(cx - hw)), max(0, int(cy - hh))
+    c_, d_ = min(fw, int(cx + hw)), min(fh, int(cy + hh))
+    if c_ - a_ < 2 or d_ - b_ < 2:
+        return None
+    m = cv2.cvtColor(frame[b_:d_, a_:c_], cv2.COLOR_BGR2LAB).reshape(-1, 3).mean(axis=0)
+    return (float(m[0]), float(m[1]), float(m[2]))
+
+
+def dedup_dets(dets):
+    """Two boxes whose centres nearly coincide are one object twice.
+
+    Agnostic NMS works on IoU, and a squat box plus a tall box over the same
+    patty can slip under the threshold together. Physical objects cannot
+    overlap, so keep the confident one.
+    """
+    import math
+    dets = sorted(dets, key=lambda d: -d[3])
+    kept = []
+    for d in dets:
+        if all(math.hypot(d[0] - k[0], d[1] - k[1]) > 0.8 * max(d[2], k[2])
+               for k in kept):
+            kept.append(d)
+    return kept
+
+
 def size_gate(dets, radii, lo=0.58, hi=1.7, warmup=12):
     """Patties on one griddle are the same size — outliers are not patties.
 
@@ -24,9 +58,9 @@ def size_gate(dets, radii, lo=0.58, hi=1.7, warmup=12):
     median has `warmup` samples everything passes: a cold start must not
     swallow the first real patties.
     """
-    for cx, cy, r, cf in dets:
-        if cf >= 0.6:
-            radii.append(r)
+    for d in dets:
+        if d[3] >= 0.6:
+            radii.append(d[2])
     if len(radii) < warmup:
         return dets, 0
     ref = sorted(radii)[len(radii) // 2]
@@ -195,7 +229,9 @@ class Pipeline(threading.Thread):
                     if max(w, h) / max(fw, fh) > cfg.max_size_frac:
                         continue
                     dets.append((((x1 + x2) / 2) / fw, ((y1 + y2) / 2) / fh,
-                                 (w + h) / 4 / fw, round(cf, 3)))
+                                 (w + h) / 4 / fw, round(cf, 3),
+                                 lab_of(frame, x1, y1, x2, y2)))
+            dets = dedup_dets(dets)
             dets, n_size = size_gate(dets, self.radii)
             self.status["size_rejected"] = n_size
             roi = self.s.get("roi") or []
