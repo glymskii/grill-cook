@@ -16,6 +16,24 @@ ROOT = Path(__file__).resolve().parent.parent
 BEST = ROOT / "runs/detect/runs/detect/patty_v6/weights/best.pt"
 
 
+def size_gate(dets, radii, lo=0.58, hi=1.7, warmup=12):
+    """Patties on one griddle are the same size — outliers are not patties.
+
+    The reference is a running median of confidently detected radii, so it
+    adapts to the camera's framing instead of assuming pixel sizes. Until the
+    median has `warmup` samples everything passes: a cold start must not
+    swallow the first real patties.
+    """
+    for cx, cy, r, cf in dets:
+        if cf >= 0.6:
+            radii.append(r)
+    if len(radii) < warmup:
+        return dets, 0
+    ref = sorted(radii)[len(radii) // 2]
+    kept = [d for d in dets if lo * ref <= d[2] <= hi * ref]
+    return kept, len(dets) - len(kept)
+
+
 def in_poly(x: float, y: float, poly) -> bool:
     """Ray-cast point-in-polygon over normalized vertices."""
     inside = False
@@ -39,10 +57,11 @@ class Pipeline(threading.Thread):
         self.latest = None                    # (frame, t_arr)
         self.jpeg = None                      # annotated preview
         self.clipbuf = deque(maxlen=64)       # ~16s of clean frames at 4fps
+        self.radii = deque(maxlen=180)        # running size reference
         self.frame_wh = (0, 0)
         self.status = {"stream": "connecting", "source_fps": 0.0,
                        "processed_fps": 0.0, "detect_ms": 0.0, "last_frame_age": None,
-                       "scene_cuts": 0}
+                       "scene_cuts": 0, "size_rejected": 0}
         self._in_stamps, self._out_stamps = [], []
 
     # ---- model --------------------------------------------------------------
@@ -177,6 +196,8 @@ class Pipeline(threading.Thread):
                         continue
                     dets.append((((x1 + x2) / 2) / fw, ((y1 + y2) / 2) / fh,
                                  (w + h) / 4 / fw, round(cf, 3)))
+            dets, n_size = size_gate(dets, self.radii)
+            self.status["size_rejected"] = n_size
             roi = self.s.get("roi") or []
             if len(roi) >= 3:
                 # timers exist only inside the work zone: the pass tray and

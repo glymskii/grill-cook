@@ -42,8 +42,8 @@ class LivePatty:
 
 
 class TimerEngine:
-    def __init__(self, targets: dict, flip_gap_min=0.4, removed_after=9.0,
-                 flip_cooldown=8.0, min_side_before_flip=5.0, assoc_frac=1.6,
+    def __init__(self, targets: dict, flip_gap_min=1.2, removed_after=9.0,
+                 flip_cooldown=30.0, min_side_before_flip=25.0, assoc_frac=1.6,
                  birth_conf=0.30):
         self.targets = targets                  # {"A": s, "B": s, "tol_early": s, "tol_late": s}
         self.flip_gap_min = flip_gap_min

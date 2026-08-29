@@ -376,7 +376,8 @@ async function refreshStatus(){const s=await j('/api/status');
     `<span class="chip num">camera <b>${s.source_fps||0}</b> fps</span>`,
     `<span class="chip num">processing <b>${s.processed_fps||0}</b> fps</span>`,
     `<span class="chip num">inference <b>${s.detect_ms||0}</b> ms</span>`);
-    if(s.outside_roi)c.push(`<span class="chip" style="border-color:var(--warn)">⚠ outside zone <b style="color:var(--warn)">${s.outside_roi}</b></span>`);}
+    if(s.outside_roi)c.push(`<span class="chip" style="border-color:var(--warn)">⚠ outside zone <b style="color:var(--warn)">${s.outside_roi}</b></span>`);
+    if(s.size_rejected)c.push(`<span class="chip" style="border-color:var(--warn)">⚠ wrong size <b style="color:var(--warn)">${s.size_rejected}</b></span>`);}
   if(s.shift)c.push(`<span class="chip">shift <b>${s.shift.cook}</b></span>`);
   $('live-chips').innerHTML=c.join('');
   $('preview').style.display=(running||roiMode)?'block':'none';

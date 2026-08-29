@@ -770,6 +770,7 @@ async def ws_browser(sock: WebSocket):
                          "frame_wh": agent_state.get("frame_wh", (0, 0)),
                          "stream": agent_state.get("status", {}).get("stream", "—"),
                          "shift": active_shift(),
+                         "roi": settings.get("roi") or [],
                          "targets": {"A": settings["target_a"], "B": settings["target_b"],
                                      "tol_early": settings["tol_early"],
                                      "tol_late": settings["tol_late"]}})

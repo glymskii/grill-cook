@@ -39,7 +39,7 @@
 <script>
 const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
 let W=0,H=0,frameWH=[1080,1920],showBg=true,sound=false,audio=null;
-let state={patties:[],running:false},offset=0,haveOffset=false,lastMsg=0,lastCut=0;
+let state={patties:[],running:false},offset=0,haveOffset=false,lastMsg=0,lastCut=0,roi=[];
 let streak=0,optimal=0,flips=0;
 let bg=new Image(),bgOk=false;
 // double-buffered: swap only after the next frame fully decodes, so a slow
@@ -66,6 +66,7 @@ function connect(){
     const off=m.server_ts-Date.now()/1000;
     offset=haveOffset?offset*0.9+off*0.1:off;haveOffset=true;
     if(m.frame_wh&&m.frame_wh[0])frameWH=m.frame_wh;
+    if(m.roi)roi=m.roi;
     (m.patties||[]).forEach(p=>{if(p.feedback)onFeedback(p);});
     if(m.session){streak=m.session.streak;optimal=m.session.optimal;flips=m.session.flips;}
     if(m.scene_cut_ts&&m.scene_cut_ts!==lastCut){lastCut=m.scene_cut_ts;
@@ -103,6 +104,19 @@ function draw(){
   const [fw,fh]=frameWH,s=Math.min(W/fw,H/fh),ox=(W-fw*s)/2,oy=(H-fh*s)/2;
   if(bgOk&&showBg&&state.running&&state.stream==='ok'){ctx.globalAlpha=0.35;ctx.drawImage(bg,ox,oy,fw*s,fh*s);ctx.globalAlpha=1;}
   ctx.strokeStyle='#233040';ctx.strokeRect(ox,oy,fw*s,fh*s);
+  // grill zone: dim everything outside it, so "timed" vs "ignored" is unambiguous
+  if(roi.length>=3){
+    const P=roi.map(p=>[ox+p[0]*fw*s,oy+p[1]*fh*s]);
+    ctx.save();
+    ctx.beginPath();ctx.rect(ox,oy,fw*s,fh*s);
+    ctx.moveTo(P[0][0],P[0][1]);
+    for(let i=P.length-1;i>0;i--)ctx.lineTo(P[i][0],P[i][1]);
+    ctx.closePath();
+    ctx.fillStyle='rgba(4,8,14,0.62)';ctx.fill('evenodd');
+    ctx.restore();
+    ctx.beginPath();P.forEach((p,i)=>ctx[i?'lineTo':'moveTo'](p[0],p[1]));ctx.closePath();
+    ctx.strokeStyle='rgba(80,220,90,0.85)';ctx.lineWidth=2*devicePixelRatio;ctx.stroke();
+  }
   const now=Date.now()/1000+offset;
   let anyOver=false;
   for(const p of (state.patties||[])){
@@ -117,6 +131,8 @@ function draw(){
     ctx.lineWidth=4*devicePixelRatio;ctx.strokeStyle='#2a3440';ctx.stroke();
     ctx.beginPath();ctx.arc(x,y,r,-Math.PI/2,-Math.PI/2+Math.min(1,frac)*2*Math.PI);
     ctx.strokeStyle=ring;ctx.setLineDash(p.missing?[8,8]:[]);ctx.stroke();ctx.setLineDash([]);
+    ctx.beginPath();ctx.arc(x,y,2.5*devicePixelRatio,0,7);
+    ctx.fillStyle=ring;ctx.fill();
     ctx.fillStyle='#e8eef5';ctx.textAlign='center';
     if(remain<=3.5&&remain>-tol){
       const n=Math.max(0,Math.ceil(remain));
