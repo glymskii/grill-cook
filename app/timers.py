@@ -97,7 +97,8 @@ class TimerEngine:
                  flip_cooldown=30.0, min_side_before_flip=25.0, assoc_frac=1.6,
                  birth_conf=0.30, gate_base=1.45, gate_max=2.6, size_gate=1.55,
                  colour_scale=26.0, revive_window=60.0, revive_colour=22.0,
-                 overlap_frac=0.55, use_kf=False, birth_suppress=1.2):
+                 overlap_frac=0.55, use_kf=False, birth_suppress=1.2,
+                 kf_min_age=20.0):
         self.targets = targets                  # {"A": s, "B": s, "tol_early": s, "tol_late": s}
         self.flip_gap_min = flip_gap_min
         self.removed_after = removed_after
@@ -123,8 +124,12 @@ class TimerEngine:
         # KF-assisted association tripled track life offline but costs identity
         # correctness on dense layouts (teleports 9, undercount 14/16); stays a
         # research flag until it wins on labeled MOT ground truth.
-        self.use_kf = use_kf
+        self.use_kf = use_kf              # False | True | "hybrid"
         self.birth_suppress = birth_suppress
+        # hybrid: trust the filter only for tracks that have proven themselves —
+        # transitions (empty start, cleaning, re-layouts) stay on the plain
+        # engine where the filter's momentum does more harm than good
+        self.kf_min_age = kf_min_age
         self.alive: dict[int, LivePatty] = {}
         self.done: list[dict] = []
         self.next_pid = 1
@@ -190,7 +195,7 @@ class TimerEngine:
         """Match cost for one track/detection pair, or None if impossible."""
         cx, cy, r, _cf, lab = det
         ref = max((p.r + r) / 2, 1e-6)
-        ex, ey = p.kf.peek(now) if (self.use_kf and p.kf) else (p.cx, p.cy)
+        ex, ey = p.kf.peek(now) if self._trust_kf(p, now) else (p.cx, p.cy)
         dist = math.hypot(cx - ex, cy - ey) / ref
         gap = 0.0 if p.missing_since is None else now - p.missing_since
         # the gate widens only for a track that has been missing — the cook may
@@ -204,6 +209,13 @@ class TimerEngine:
         if lab and p.lab:
             cost += min(_lab_dist(lab, p.lab) / self.colour_scale, 1.5)
         return cost
+
+    def _trust_kf(self, p: "LivePatty", now: float) -> bool:
+        if not self.use_kf or p.kf is None:
+            return False
+        if self.use_kf == "hybrid":
+            return now - p.placed_ts >= self.kf_min_age
+        return True
 
     def _assign(self, dets, now: float):
         """Globally optimal track -> detection assignment."""
@@ -312,7 +324,7 @@ class TimerEngine:
                 if p.kf is None:
                     p.kf = KF(cx, cy, now)
                 p.kf.update(cx, cy, now)
-                if self.use_kf:
+                if self._trust_kf(p, now):
                     p.cx, p.cy = p.kf.x[0], p.kf.x[1]
                 else:
                     p.cx = 0.7 * p.cx + 0.3 * cx
@@ -337,7 +349,7 @@ class TimerEngine:
             # (the Kalman prediction closes that distance next frame), not
             # mint a duplicate id. Touching neighbours sit 2r apart — safe.
             def near(q):
-                qx, qy = q.kf.peek(now) if (self.use_kf and q.kf) else (q.cx, q.cy)
+                qx, qy = q.kf.peek(now) if self._trust_kf(q, now) else (q.cx, q.cy)
                 return math.hypot(cx - qx, cy - qy) < self.birth_suppress * max(q.r, r)
             if any(near(q) for q in self.alive.values()):
                 continue

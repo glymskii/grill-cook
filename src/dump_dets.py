@@ -18,7 +18,10 @@ from config import Config                              # noqa: E402
 from pipeline import dedup_dets, in_poly, lab_of, size_gate  # noqa: E402
 
 ROI = [[0.22, 0.72], [0.48, 0.09], [0.95, 0.20], [0.70, 0.97]]
-WINDOWS = [("tune", 120.0, 300.0), ("holdout", 620.0, 740.0)]
+import sys as _sys
+WINDOWS = ([(_sys.argv[1], float(_sys.argv[2]), float(_sys.argv[3]))]
+           if len(_sys.argv) > 3 else
+           [("tune", 120.0, 300.0), ("holdout", 620.0, 740.0)])
 FPS = 5.0
 
 cfg = Config()
