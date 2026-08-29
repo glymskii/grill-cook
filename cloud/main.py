@@ -694,6 +694,7 @@ async def ws_agent(sock: WebSocket):
     agent_ws = sock
     agent_seen = time.time()
     await sock.send_text(json.dumps({"type": "hello", "have_settings": settings_touched,
+                                     "have_shifts": len(shifts) > 0,
                                      "have_events": len(events) > 0}))
     await push_config()
     try:
@@ -739,8 +740,10 @@ async def ws_agent(sock: WebSocket):
                     settings_touched = True
                 if not shifts and m.get("shifts"):
                     shifts.extend(m["shifts"])
+                    await db.kv_set("shifts", shifts)
                 if m.get("run"):
                     desired_run = True       # the kitchen was live — stay live
+                await db.kv_set("settings", {k: settings[k] for k in DEFAULTS})
                 await push_config()
     except WebSocketDisconnect:
         pass

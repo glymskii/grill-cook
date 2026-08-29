@@ -108,7 +108,8 @@ class Worker:
                                       max_size=2 ** 22) as ws:
             print("hub connected")
             hello = json.loads(await ws.recv())
-            if not hello.get("have_settings") and self.cached().get("settings"):
+            need = not hello.get("have_settings") or not hello.get("have_shifts")
+            if need and self.cached().get("settings"):
                 await ws.send(json.dumps({"type": "restore", **self.cached()}))
                 print("hub state restored from local cache (run=%s)"
                       % self.cached().get("run"))
