@@ -5,6 +5,7 @@ then replays these at CPU speed. Preprocessing mirrors the live pipeline:
 zone, dedup, size gate, Lab colour.
 """
 import json
+import os
 import sys
 from collections import deque
 from pathlib import Path
@@ -17,7 +18,7 @@ sys.path.insert(0, str(ROOT / "app"))
 from config import Config                              # noqa: E402
 from pipeline import dedup_dets, in_poly, lab_of, size_gate  # noqa: E402
 
-ROI = [[0.22, 0.72], [0.48, 0.09], [0.95, 0.20], [0.70, 0.97]]
+ROI = [[0.215, 0.70], [0.415, 0.085], [0.885, 0.165], [0.695, 0.92]]
 import sys as _sys
 WINDOWS = ([(_sys.argv[1], float(_sys.argv[2]), float(_sys.argv[3]))]
            if len(_sys.argv) > 3 else
@@ -28,7 +29,7 @@ cfg = Config()
 from ultralytics import YOLO
 model = YOLO("runs/detect/runs/detect/patty_v6/weights/best.pt")
 
-cap = cv2.VideoCapture("data/IMG_6635.mov")
+cap = cv2.VideoCapture(os.environ.get("SRC", "data/IMG_6635.mov"))
 src_fps = cap.get(cv2.CAP_PROP_FPS)
 for name, t0, t1 in WINDOWS:
     radii = deque(maxlen=180)

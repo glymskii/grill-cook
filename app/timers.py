@@ -138,6 +138,7 @@ class TimerEngine:
         self.freeze_until = 0.0                 # settle window after a scene cut
         self.scene_cut_ts = 0.0
         self.match_stat = (0, 0)                # (matched alive, total alive) per frame
+        self._now = 0.0                         # engine clock, for offline replay
 
     # ---- events -------------------------------------------------------------
     def _emit_raw(self, ev: dict):
@@ -148,7 +149,8 @@ class TimerEngine:
             self.on_event(ev)
 
     def _emit(self, kind: str, p: LivePatty, extra: dict | None = None):
-        ev = {"ts": round(time.time(), 2), "type": kind, "pid": p.pid,
+        ev = {"ts": round(time.time(), 2), "ts_video": round(self._now, 2),
+              "type": kind, "pid": p.pid,
               "side": p.side, "flips": p.flips,
               "side_a": round(p.side_time["A"], 1), "side_b": round(p.side_time["B"], 1),
               "ta": self.targets["A"], "tb": self.targets["B"],
@@ -304,6 +306,7 @@ class TimerEngine:
     # ---- per-frame update ---------------------------------------------------
     def update(self, dets: list[tuple[float, float, float]], now: float):
         """dets: (cx, cy, r[, conf]) in normalized coords, r = radius/frame_w."""
+        self._now = now
         if now < self.freeze_until:
             return
         dets = [self._norm_det(d) for d in dets]
