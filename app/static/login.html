@@ -1,0 +1,37 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Grill Cook — Sign in</title>
+<style>
+  :root{--bg:#f2f5f9;--fg:#16212c;--card:#fff;--line:#dbe3ec;--dim:#5b6b7b;--accent:#2a78d6;--bad:#c03538}
+  @media(prefers-color-scheme:dark){:root{--bg:#0a0e13;--fg:#e8eef5;--card:#131a22;--line:#22303f;--dim:#8fa1b3;--accent:#3987e5;--bad:#e5595d}}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);
+    color:var(--fg);font:15px/1.5 -apple-system,system-ui,sans-serif}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;
+    padding:30px 28px;width:min(360px,92vw);box-shadow:0 8px 30px rgba(10,20,40,.12)}
+  h1{font-size:19px;margin:0 0 4px}
+  .sub{color:var(--dim);font-size:13px;margin-bottom:18px}
+  label{display:block;font-size:12px;color:var(--dim);margin:12px 0 4px}
+  input{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:9px;
+    background:var(--bg);color:var(--fg);font-size:14.5px}
+  input:focus{outline:2px solid var(--accent);outline-offset:-1px}
+  button{width:100%;margin-top:18px;padding:11px;border:0;border-radius:10px;
+    background:var(--accent);color:#fff;font-size:14.5px;font-weight:600;cursor:pointer}
+  #err{color:var(--bad);font-size:13px;margin-top:10px;min-height:18px}
+</style></head><body>
+<form class="card" id="f">
+  <h1>🍔 Grill Cook</h1>
+  <div class="sub">Sign in to the kitchen admin</div>
+  <label>Email</label><input id="email" type="email" autocomplete="username" required>
+  <label>Password</label><input id="pass" type="password" autocomplete="current-password" required>
+  <button>Sign in</button>
+  <div id="err"></div>
+</form>
+<script>
+document.getElementById('f').onsubmit=async e=>{
+  e.preventDefault();
+  const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({email:email.value,password:document.getElementById('pass').value})});
+  if(r.ok)location='/admin';
+  else document.getElementById('err').textContent='Invalid email or password.';};
+</script></body></html>

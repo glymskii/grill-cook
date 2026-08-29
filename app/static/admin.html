@@ -81,6 +81,8 @@
   <nav>
     <a href="#overview">Overview</a><a href="#live">Live</a><a href="#camera">Camera</a>
     <a href="#targets">Targets</a><a href="#shifts">Shifts</a><a href="#events">Events</a>
+    <a href="#alerts">Alerts</a><a href="#team">Team</a><a href="#audit">Audit</a>
+    <a href="#" id="wizbtn" style="color:var(--accent)">✨ Setup wizard</a>
   </nav>
   <div id="dots">
     <span><span class="dot" id="d-edge"></span>edge</span>
@@ -88,6 +90,8 @@
     <span class="num" id="d-fps"></span>
   </div>
   <button id="toggle">▶ Start</button>
+  <span class="chip" id="me" style="margin:0"></span>
+  <a href="#alerts" class="chip" id="bell" style="margin:0;text-decoration:none">🔔 <b id="belln">0</b></a>
 </div>
 
 <main>
@@ -117,6 +121,7 @@
 <section id="live"><h2>Live station</h2>
 <div class="card">
   <div id="live-chips" style="margin-bottom:8px"></div>
+  <div id="stations-row" class="note" style="margin:0 0 8px"></div>
   <div style="position:relative;max-width:840px"><img id="preview" alt="">
     <canvas id="roiCv" style="position:absolute;left:0;top:0;cursor:crosshair;display:none"></canvas></div>
   <div class="row" style="max-width:840px">
@@ -158,7 +163,11 @@
 </div>
 </section>
 
-<section id="targets"><h2>Cooking targets</h2>
+<section id="targets"><h2>Cooking targets · products</h2>
+<div class="card" style="margin-bottom:14px">
+  <div id="skus" style="display:flex;flex-wrap:wrap;gap:10px"></div>
+  <div class="note">The active product drives the live timers. Edit numbers below, then “Save as new product” or “Update active”.</div>
+</div>
 <div class="card" style="max-width:640px">
   <div class="row"><div><label>Units</label><select id="units">
     <option value="imperial">inches / °F</option><option value="metric">cm / °C</option></select></div><div></div></div>
@@ -180,7 +189,10 @@
     <div><label>Early tolerance, s</label><input id="tol_early" type="number"></div>
     <div><label>Late tolerance, s</label><input id="tol_late" type="number"></div>
   </div>
-  <button id="saveRec" style="margin-top:12px">Save targets</button>
+  <div class="row" style="margin-top:12px">
+    <button id="saveRec">Update active product</button>
+    <button class="ghost" id="skuNew">Save as new product…</button>
+  </div>
   <div class="note">⚠️ Suggestion is a v0 consistency estimate, not food safety.
   Ground beef must reach 160°F / 71°C inside — verify with a thermometer.</div>
 </div>
@@ -201,6 +213,53 @@
 <div class="card"><table id="shifts_t"></table>
   <div class="note">The active shift is highlighted; its cook is attributed to every event.</div></div>
 </div>
+</section>
+
+<section id="alerts"><h2>Alerts &amp; integrations</h2>
+<div class="grid2">
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <b>Recent alerts</b><button class="ghost sm" id="ackAll">Mark all read</button></div>
+  <table id="alerts_t"></table>
+</div>
+<div class="card">
+  <b>Delivery &amp; thresholds</b>
+  <label>Telegram bot token <span class="note" id="tg_state"></span></label>
+  <input id="tg_token" placeholder="123456:ABC… (stored server-side, write-only)">
+  <label>Telegram chat id</label><input id="tg_chat" placeholder="-100123456789">
+  <label>Shift compliance alert below, %</label><input id="comp_min" type="number" min="0" max="100">
+  <div class="row" style="margin-top:12px">
+    <button id="saveAlerts">Save</button>
+    <button class="ghost" id="testAlert">Send test alert</button>
+  </div>
+  <div class="note">Built-in rules: edge offline &gt; 2 min, camera silent &gt; 5 min while running,
+  shift ends under the compliance threshold. Alerts always appear here; Telegram is optional.</div>
+</div>
+</div>
+</section>
+
+<section id="team" style="display:none"><h2>Team &amp; access</h2>
+<div class="grid2">
+<div class="card">
+  <b>Invite a user</b>
+  <div class="row">
+    <div><label>Email</label><input id="u_email" type="email"></div>
+    <div><label>Name</label><input id="u_name"></div>
+    <div><label>Role</label><select id="u_role">
+      <option value="viewer">viewer — read-only</option>
+      <option value="manager">manager — operate</option>
+      <option value="owner">owner — full</option></select></div>
+  </div>
+  <button id="u_add" style="margin-top:12px">Create user</button>
+  <div class="note" id="u_result"></div>
+  <div class="note">A one-time password is shown once — send it to the person; they can’t change it themselves yet (reset reissues it).</div>
+</div>
+<div class="card"><table id="users_t"></table></div>
+</div>
+</section>
+
+<section id="audit" style="display:none"><h2>Audit log</h2>
+<div class="card"><table id="audit_t"></table></div>
 </section>
 
 <section id="events"><h2>Event log</h2>
@@ -267,8 +326,30 @@ async function loadSettings(){const s=await j('/api/settings');meta=s;
     el.appendChild(b);}}
 $('saveCam').onclick=()=>{const b={};CAM.forEach(f=>{const v=$(f).value;b[f]=isNaN(+v)||v===''?v:+v;});
   post(b).then(()=>alert('Saved. Restart the pipeline to apply.'));};
-$('saveRec').onclick=()=>{const b={...readMetric()};NUMS.forEach(f=>b[f]=+$(f).value);
-  post(b).then(()=>alert('Targets saved (applied immediately).'));};
+let skuState={skus:[],active:null};
+async function refreshSkus(){skuState=await j('/api/skus');
+  $('skus').innerHTML=skuState.skus.map(k=>{
+    const act=k.id===skuState.active;
+    return `<div class="kpi" style="${act?'outline:2px solid var(--ok)':''}">
+      <div class="v" style="font-size:15px">${k.name}</div>
+      <div class="l num">A ${k.target_a}s · B ${k.target_b}s · ±${k.tol_early}/${k.tol_late}</div>
+      <div style="margin-top:6px">${act?'<span class="note">active</span>':`<button class="sm" onclick="skuAct('activate','${k.id}')">Activate</button>`}
+      <button class="ghost sm" onclick="skuLoad('${k.id}')">Edit</button>
+      ${act?'':`<button class="ghost sm" onclick="skuAct('delete','${k.id}')">✕</button>`}</div></div>`;
+  }).join('')||'<span class="note">no products yet — set numbers below and “Save as new product”.</span>';}
+window.skuAct=async(action,id)=>{await j('/api/skus',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,id})});refreshSkus();loadSettings();};
+window.skuLoad=id=>{const k=skuState.skus.find(x=>x.id===id);if(!k)return;
+  NUMS.forEach(f=>$(f).value=k[f]);window._editSku=k;};
+$('skuNew').onclick=async()=>{
+  const name=prompt('Product name (e.g. Beef ¼lb, Chicken, Smash):');if(!name)return;
+  const sku={name};NUMS.forEach(f=>sku[f]=+$(f).value);
+  await j('/api/skus',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'save',sku})});refreshSkus();};
+$('saveRec').onclick=async()=>{const b={...readMetric()};NUMS.forEach(f=>b[f]=+$(f).value);
+  await post(b);
+  if(skuState.active){const k=skuState.skus.find(x=>x.id===skuState.active);
+    if(k){NUMS.forEach(f=>k[f]=+$(f).value);
+      await j('/api/skus',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'save',sku:k})});}}
+  refreshSkus();alert('Applied to the live station.');};
 $('calc').onclick=async()=>{const m=readMetric();
   const r=await j(`/api/recommend?d=${m.diameter_cm}&h=${m.thickness_cm}&tg=${m.griddle_c}&tf=${m.freezer_c}`);
   $('rec').innerHTML=`Suggested: <b>A ${r.side_a}s</b> · <b>B ${r.side_b}s</b>
@@ -411,13 +492,114 @@ function renderEvents(){
   const grades={optimal:'<span class="g-optimal">✔ on time</span>',early:'<span class="g-early">⚠ early</span>',late:'<span class="g-late">⛔ late</span>'};
   const fl=evFilter?evFilter.split(','):null;
   const rows=evCache.filter(e=>!fl||fl.includes(e.type)).slice(0,80);
-  $('events_t').innerHTML='<tr><th>time</th><th>event</th><th>#</th><th>side</th><th>grade</th><th>A, s</th><th>B, s</th></tr>'+
+  $('events_t').innerHTML='<tr><th>time</th><th>event</th><th>#</th><th>side</th><th>grade</th><th>A, s</th><th>B, s</th><th></th></tr>'+
    rows.map(e=>`<tr><td class="num">${new Date(e.ts*1000).toLocaleTimeString()}</td>
     <td class="ev-${e.type}">${names[e.type]||e.type}</td><td class="num">${e.pid??''}</td><td>${e.side??''}</td>
-    <td>${e.grade?grades[e.grade]:''}</td><td class="num">${e.side_a??''}</td><td class="num">${e.side_b??''}</td></tr>`).join('')
+    <td>${e.grade?grades[e.grade]:''}</td><td class="num">${e.side_a??''}</td><td class="num">${e.side_b??''}</td>
+    <td>${e.clip?`<a href="#" onclick="playClip('${e.clip}');return false">▶ clip</a>`:''}</td></tr>`).join('')
    ||'<tr><td class="note">no events</td></tr>';}
+// ---- onboarding wizard ----------------------------------------------------
+const WIZ=[
+ {t:'Station basics',b:()=>`<p>This wizard walks a new kitchen from zero to live timers in ~15 minutes.</p>
+   <label>Location name (shown in the header)</label><input id="wz_loc" value="${meta._location||''}" disabled>
+   <div class="note">Renaming the location is an infra variable for now (LOCATION_NAME).</div>`},
+ {t:'Connect the camera',b:()=>`<p>Run one of the publish commands from the <b>Camera</b> section on the kitchen laptop, pointing at the tripod camera.</p>
+   <div class="note">Waiting for the stream…</div><div id="wz_cam" class="chip">checking…</div>`,
+   tick:async el=>{const st=await j('/api/status');
+     el.querySelector('#wz_cam').innerHTML=st.running&&st.stream==='ok'
+       ?'✅ stream is live':st.running?'⏳ pipeline running, waiting for stream…':'▶ press Start in the header first';}},
+ {t:'Draw the grill zone',b:()=>`<p>Close the wizard, use <b>✏️ Edit grill zone</b> in the Live section: click around the cooking surface, save. Timers outside the zone are suppressed (pass tray, prep boards).</p>`},
+ {t:'Pick the product',b:()=>`<p>In <b>Targets</b>: set per-side times and tolerances, then “Save as new product”. The active product drives the countdowns.</p>`},
+ {t:'Add the shift',b:()=>`<p>In <b>Shifts</b>: cook name or code, weekdays, hours. Every completed patty is attributed to the active shift for the analytics.</p>
+   <p>That's it — open the cook link on the tablet (Live section) and start cooking. 🍔</p>`}];
+let wizStep=0,wizTimer=null;
+$('wizbtn').onclick=e=>{e.preventDefault();wizStep=0;wizShow();};
+function wizShow(){
+  let ov=document.getElementById('wizov');
+  if(!ov){ov=document.createElement('div');ov.id='wizov';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(5,10,18,.72);z-index:70;display:grid;place-items:center';
+    document.body.appendChild(ov);}
+  const st=WIZ[wizStep];
+  ov.innerHTML=`<div class="card" style="width:min(560px,94vw)">
+    <div class="note">Step ${wizStep+1} of ${WIZ.length}</div>
+    <h3 style="margin:4px 0 10px">${st.t}</h3><div id="wizbody">${st.b()}</div>
+    <div class="row" style="margin-top:16px">
+      ${wizStep?'<button class="ghost" id="wz_back">← Back</button>':'<span></span>'}
+      <button id="wz_next">${wizStep<WIZ.length-1?'Next →':'Finish'}</button>
+    </div></div>`;
+  clearInterval(wizTimer);
+  if(st.tick){const el=ov;st.tick(el);wizTimer=setInterval(()=>st.tick(el),3000);}
+  ov.querySelector('#wz_next').onclick=()=>{if(wizStep<WIZ.length-1){wizStep++;wizShow();}
+    else{clearInterval(wizTimer);ov.remove();}};
+  const back=ov.querySelector('#wz_back');
+  if(back)back.onclick=()=>{wizStep--;wizShow();};}
+// ---- stations -------------------------------------------------------------
+async function refreshStations(){const st=await j('/api/stations');
+  $('stations-row').innerHTML=st.length>1||st.some(x=>x.name!=='main')
+    ?'Stations: '+st.map(x=>`<span class="chip" style="margin:0 4px 0 0">${x.online?'🟢':'🔴'} ${x.name}</span>`).join('')
+    :'';}
+setInterval(refreshStations,10000);refreshStations();
+window.playClip=name=>{
+  const ov=document.createElement('div');
+  ov.style.cssText='position:fixed;inset:0;background:rgba(5,10,18,.82);z-index:60;display:grid;place-items:center';
+  ov.innerHTML=`<div style="max-width:760px;width:92vw"><video controls autoplay
+    style="width:100%;border-radius:12px" src="/api/clip/${name}"></video>
+    <div class="note" style="color:#cfd8e3;text-align:center;margin-top:8px">10 s before → 3 s after the event · click anywhere to close</div></div>`;
+  ov.onclick=e=>{if(e.target===ov)ov.remove();};
+  document.body.appendChild(ov);};
 // ---- boot -----------------------------------------------------------------
-loadSettings();refreshShifts();refreshEvents();refreshStatus();refreshAnalytics();refreshHealth();
+// ---- me / users / audit ---------------------------------------------------
+let myRole='viewer';
+async function refreshMe(){const m=await j('/api/me');myRole=m.role||'viewer';
+  $('me').innerHTML=`👤 <b>${m.email==='legacy-key'?'admin key':m.email}</b> · ${m.role}
+    ${m.email!=='legacy-key'?'<a href="#" onclick="logout();return false" style="margin-left:6px">sign out</a>':''}`;
+  const boss=m.role==='owner';
+  document.getElementById('team').style.display=boss?'':'none';
+  document.getElementById('audit').style.display=(m.role==='owner'||m.role==='manager')?'':'none';
+  if(boss){refreshUsers();}
+  if(boss||m.role==='manager')refreshAudit();}
+window.logout=async()=>{await fetch('/api/logout',{method:'POST'});location='/login';};
+async function refreshUsers(){const list=await j('/api/users');
+  $('users_t').innerHTML='<tr><th>email</th><th>name</th><th>role</th><th></th><th></th></tr>'+
+   list.map(u=>`<tr><td>${u.email}</td><td>${u.name||''}</td><td>${u.role}</td>
+    <td><a href="#" onclick="userAct('reset','${u.email}');return false">reset pw</a></td>
+    <td><a href="#" onclick="userAct('delete','${u.email}');return false">✕</a></td></tr>`).join('');}
+window.userAct=async(action,email)=>{
+  if(action==='delete'&&!confirm('Delete '+email+'?'))return;
+  const r=await j('/api/users',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action,email})});
+  if(r.temp_password)$('u_result').innerHTML=`New one-time password for <b>${email}</b>: <code>${r.temp_password}</code>`;
+  refreshUsers();};
+$('u_add').onclick=async()=>{
+  const r=await fetch('/api/users',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({email:$('u_email').value,name:$('u_name').value,role:$('u_role').value})});
+  const d=await (r.ok?r.json():r.text());
+  $('u_result').innerHTML=r.ok?`Created <b>${$('u_email').value}</b> — one-time password: <code>${d.temp_password}</code>`:('⚠ '+d);
+  refreshUsers();};
+async function refreshAudit(){const list=await j('/api/audit');
+  $('audit_t').innerHTML='<tr><th>time</th><th>user</th><th>action</th><th>details</th></tr>'+
+   list.map(a=>`<tr><td class="num">${new Date(a.ts*1000).toLocaleString()}</td><td>${a.user}</td>
+    <td>${a.action}</td><td class="note">${a.payload?JSON.stringify(a.payload).slice(0,90):''}</td></tr>`).join('')
+   ||'<tr><td class="note">empty</td></tr>';}
+// ---- alerts ---------------------------------------------------------------
+const LVL={bad:'var(--bad)',warn:'var(--warn)',ok:'var(--ok)'};
+async function refreshAlerts(){const a=await j('/api/alerts');
+  $('belln').textContent=a.unack;
+  $('bell').style.borderColor=a.unack?'var(--bad)':'var(--line)';
+  $('alerts_t').innerHTML='<tr><th>time</th><th>level</th><th>message</th></tr>'+
+   a.alerts.map(x=>`<tr><td class="num">${new Date(x.ts*1000).toLocaleString()}</td>
+    <td style="color:${LVL[x.level]||'inherit'}">●</td><td>${x.message}</td></tr>`).join('')
+   ||'<tr><td class="note">quiet so far</td></tr>';}
+$('ackAll').onclick=async()=>{await j('/api/alerts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'ack_all'})});refreshAlerts();};
+async function loadAlertCfg(){const c=await j('/api/alert_cfg');
+  $('tg_chat').value=c.telegram_chat||'';$('comp_min').value=c.compliance_min;
+  $('tg_state').textContent=c.telegram_token_set?'· token saved ✓':'· not set';}
+$('saveAlerts').onclick=async()=>{await j('/api/alert_cfg',{method:'POST',headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({telegram_token:$('tg_token').value,telegram_chat:$('tg_chat').value,compliance_min:+$('comp_min').value})});
+  $('tg_token').value='';loadAlertCfg();alert('Saved.');};
+$('testAlert').onclick=()=>j('/api/alert_test',{method:'POST'}).then(refreshAlerts);
+loadSettings();refreshShifts();refreshEvents();refreshStatus();refreshAnalytics();refreshHealth();refreshMe();refreshAlerts();loadAlertCfg();
+setInterval(refreshAlerts,15000);
 setInterval(refreshStatus,1500);setInterval(refreshEvents,5000);
-setInterval(refreshAnalytics,10000);setInterval(refreshHealth,60000);
+setInterval(refreshAnalytics,10000);setInterval(refreshHealth,60000);refreshSkus();
 </script></body></html>

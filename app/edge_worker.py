@@ -23,6 +23,8 @@ from pipeline import Pipeline
 from timers import EVENTS, TimerEngine
 
 STATE = Path(__file__).parent / "state"
+CLIPS = STATE / "clips"
+CLIP_TYPES = {"flip", "removed", "invalidated", "scene_cut"}
 CACHE = STATE / "hub_cache.json"
 
 
@@ -32,6 +34,7 @@ class Worker:
         self.engine = None
         self.settings = None
         self.pending_events = []
+        self._clip_jobs = []
 
     def cache(self, data: dict):
         STATE.mkdir(exist_ok=True)
@@ -41,6 +44,41 @@ class Worker:
 
     def cached(self) -> dict:
         return json.loads(CACHE.read_text()) if CACHE.exists() else {}
+
+    def _on_event(self, ev: dict):
+        if ev.get("type") in CLIP_TYPES:
+            ev = dict(ev)
+            ev["clip"] = f"{int(ev['ts'] * 10)}_{ev['type']}_{ev.get('pid', 0)}.mp4"
+            self._clip_jobs.append((ev["ts"], ev["clip"]))
+        self.pending_events.append(ev)
+
+    def write_clip(self, ts: float, name: str):
+        """Cut [-10s..+3s] around the event from the rolling buffer."""
+        if not (self.pipe and self.pipe.is_alive()):
+            return
+        import cv2
+        import numpy as np
+        frames = [(t, j) for t, j in list(self.pipe.clipbuf)
+                  if ts - 10 <= t <= ts + 3]
+        if len(frames) < 4:
+            return
+        CLIPS.mkdir(parents=True, exist_ok=True)
+        first = cv2.imdecode(np.frombuffer(frames[0][1], np.uint8), cv2.IMREAD_COLOR)
+        h, w = first.shape[:2]
+        vw = cv2.VideoWriter(str(CLIPS / name), cv2.VideoWriter_fourcc(*"avc1"),
+                             4, (w, h))
+        if not vw.isOpened():
+            vw = cv2.VideoWriter(str(CLIPS / name), cv2.VideoWriter_fourcc(*"mp4v"),
+                                 4, (w, h))
+        for _, j in frames:
+            img = cv2.imdecode(np.frombuffer(j, np.uint8), cv2.IMREAD_COLOR)
+            if img is not None:
+                vw.write(img)
+        vw.release()
+        # retention: keep the newest 300 clips
+        clips = sorted(CLIPS.glob("*.mp4"), key=lambda f: f.stat().st_mtime)
+        for old in clips[:-300]:
+            old.unlink(missing_ok=True)
 
     def apply(self, settings: dict, run: bool):
         self.settings = settings
@@ -56,15 +94,17 @@ class Worker:
             self.engine = TimerEngine({"A": settings["target_a"], "B": settings["target_b"],
                                        "tol_early": settings["tol_early"],
                                        "tol_late": settings["tol_late"]})
-            self.engine.on_event = lambda ev: self.pending_events.append(ev)
+            self.engine.on_event = self._on_event
             self.pipe = Pipeline(settings, self.engine)
             self.pipe.start()
         elif not run and running:
             self.pipe.stop()
             self.pipe = None
 
-    async def talk(self, url: str, token: str):
-        async with websockets.connect(url, additional_headers={"x-agent-token": token},
+    async def talk(self, url: str, token: str, station: str = "main"):
+        async with websockets.connect(url,
+                                      additional_headers={"x-agent-token": token,
+                                                          "x-station": station},
                                       max_size=2 ** 22) as ws:
             print("hub connected")
             hello = json.loads(await ws.recv())
@@ -84,6 +124,10 @@ class Worker:
             async def sender():
                 while True:
                     now = time.time()
+                    while self._clip_jobs and now - self._clip_jobs[0][0] >= 3.5:
+                        ts_, name_ = self._clip_jobs.pop(0)
+                        await asyncio.get_event_loop().run_in_executor(
+                            None, self.write_clip, ts_, name_)
                     running = bool(self.pipe and self.pipe.is_alive())
                     if now - last["snap"] >= 0.2:
                         last["snap"] = now
@@ -108,7 +152,16 @@ class Worker:
             try:
                 async for raw in ws:
                     m = json.loads(raw)
-                    if m["type"] == "config":
+                    if m["type"] == "get_clip":
+                        f = CLIPS / Path(m["name"]).name
+                        if f.exists() and f.stat().st_size < 3_500_000:
+                            await ws.send(json.dumps(
+                                {"type": "clip", "name": m["name"],
+                                 "b64": base64.b64encode(f.read_bytes()).decode()}))
+                        else:
+                            await ws.send(json.dumps(
+                                {"type": "clip_missing", "name": m["name"]}))
+                    elif m["type"] == "config":
                         self.apply(m["settings"], m["run"])
                         self.cache({"run": m["run"], "shifts": m.get("shifts", [])})
             finally:
@@ -137,11 +190,12 @@ async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--hub", required=True)
     ap.add_argument("--token", required=True)
+    ap.add_argument("--station", default="main")
     args = ap.parse_args()
     w = Worker()
     while True:
         try:
-            await w.talk(args.hub, args.token)
+            await w.talk(args.hub, args.token, args.station)
         except Exception as e:
             print("hub link lost:", e)
         await asyncio.sleep(2)

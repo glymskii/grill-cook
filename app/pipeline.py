@@ -6,6 +6,7 @@ webcam pushed over the internet will hiccup and must not require a restart.
 """
 import threading
 import time
+from collections import deque
 from pathlib import Path
 
 import cv2
@@ -37,6 +38,7 @@ class Pipeline(threading.Thread):
         self.lock = threading.Lock()
         self.latest = None                    # (frame, t_arr)
         self.jpeg = None                      # annotated preview
+        self.clipbuf = deque(maxlen=64)       # ~16s of clean frames at 4fps
         self.frame_wh = (0, 0)
         self.status = {"stream": "connecting", "source_fps": 0.0,
                        "processed_fps": 0.0, "detect_ms": 0.0, "last_frame_age": None,
@@ -117,6 +119,14 @@ class Pipeline(threading.Thread):
                 continue
             frame, t_arr = item
             t1 = time.time()
+            if not self.clipbuf or t1 - self.clipbuf[-1][0] >= 0.25:
+                ch, cw = frame.shape[:2]
+                small_clip = frame if cw <= 960 else cv2.resize(
+                    frame, (960, int(ch * 960 / cw)))
+                okc, jb = cv2.imencode(".jpg", small_clip,
+                                       [cv2.IMWRITE_JPEG_QUALITY, 70])
+                if okc:
+                    self.clipbuf.append((t1, jb.tobytes()))
             small = cv2.cvtColor(cv2.resize(frame, (96, 54)),
                                  cv2.COLOR_BGR2GRAY).astype(np.float32)
             small -= float(small.mean())   # auto-exposure steps vanish here
