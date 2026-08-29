@@ -97,8 +97,11 @@ def main():
         ("ЖАДНАЯ (исходная)", old_mod.TimerEngine(dict(T))),
         ("ВЕНГР (вчера, прод)", v2.TimerEngine(dict(T))),
         ("ЯДРО: венгр + физика (кандидат)", timers_new.TimerEngine(dict(T))),
-        ("ИССЛЕД.: + КФ (флаг)", timers_new.TimerEngine(dict(T), use_kf=True,
-                                                        birth_suppress=1.55)),
+        ("КФ-НАСТРОЕННЫЙ (b.3 d.009 v.1)", (lambda: (
+            setattr(timers_new.KF, "BETA", 0.3),
+            setattr(timers_new.KF, "DEAD", 0.009),
+            setattr(timers_new.KF, "VMAX", 0.1),
+            timers_new.TimerEngine(dict(T), use_kf=True, birth_suppress=1.2))[-1])()),
     ]
     churns = [Churn() for _ in engines]
     alives = [[] for _ in engines]
