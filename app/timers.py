@@ -89,6 +89,11 @@ class LivePatty:
     face_hist: list = field(default_factory=list)   # recent face classes (0 raw/1 cooked/2 cheese)
     face: int | None = None                 # stable face, changes only on agreement
     cheesed: bool = False                   # cheese went on: this patty is finished
+    last_det: tuple | None = None           # raw detection centre, unsmoothed
+    motion: float = 0.0                     # EMA of raw displacement, in radii
+    handling: bool = False                  # in the cook's hands right now
+    face_before: int | None = None          # face it showed before this episode
+    settled_since: float = 0.0              # when it last came to rest
     kf: KF | None = None
 
     def elapsed(self, now: float) -> float:
@@ -99,12 +104,14 @@ class LivePatty:
 
 class TimerEngine:
     def __init__(self, targets: dict, flip_gap_min=1.2, removed_after=6.0,
-                 flip_cooldown=30.0, min_side_before_flip=25.0, assoc_frac=1.6,
-                 birth_conf=0.30, gate_base=1.45, gate_max=2.6, size_gate=1.55,
+                 flip_cooldown=45.0, min_side_before_flip=25.0, assoc_frac=1.6,
+                 birth_conf=0.30, gate_base=1.45, gate_max=1.8, size_gate=1.55,
                  colour_scale=26.0, revive_window=60.0, revive_colour=22.0,
-                 overlap_frac=0.55, use_kf=False, birth_suppress=1.2,
+                 overlap_frac=0.55, use_kf="motion", birth_suppress=1.2,
                  kf_min_age=20.0, colour_win=2.5, flip_dl=22.0, topping_db=12.0,
-                 crust_confirm=4.0, face_window=3.0, face_agree=0.85):
+                 crust_confirm=4.0, face_window=3.0, face_agree=0.85,
+                 static_motion=0.12, lifted_after=2.0, handle_motion=0.35,
+                 settle_time=4.0):
         self.targets = targets                  # {"A": s, "B": s, "tol_early": s, "tol_late": s}
         self.flip_gap_min = flip_gap_min
         self.removed_after = removed_after
@@ -156,6 +163,12 @@ class TimerEngine:
         # spatula shadow — 85% of their flips were false. The face classifier
         # names what it sees instead, and a face only changes when most of the
         # recent votes agree, so one bad frame cannot flip a patty.
+        self.static_motion = static_motion
+        # a static patty that disappears has been lifted off; holding its track
+        # open for the full removed_after only gives it time to steal a neighbour
+        self.lifted_after = lifted_after
+        self.handle_motion = handle_motion
+        self.settle_time = settle_time
         self.face_window = face_window
         self.face_agree = face_agree
         self.alive: dict[int, LivePatty] = {}
@@ -226,12 +239,19 @@ class TimerEngine:
         """Match cost for one track/detection pair, or None if impossible."""
         cx, cy, r, _cf, lab, _fc = det
         ref = max((p.r + r) / 2, 1e-6)
-        ex, ey = p.kf.peek(now) if self._trust_kf(p, now) else (p.cx, p.cy)
+        # Prediction is for FINDING the patty, smoothing is for reporting where it
+        # is. The filter barely stirs for a patty at rest (0.01r of drift over a
+        # noisy minute), so leaning on it here costs nothing and keeps a carried
+        # patty attached instead of snapping and being born again.
+        ex, ey = p.kf.peek(now) if p.kf else (p.cx, p.cy)
         dist = math.hypot(cx - ex, cy - ey) / ref
         gap = 0.0 if p.missing_since is None else now - p.missing_since
-        # the gate widens only for a track that has been missing — the cook may
-        # have slid that one; everyone else stays pinned to their spot
-        if dist > min(self.gate_base + 0.25 * gap, self.gate_max):
+        # The gate widens while a track is missing — but only if that patty was
+        # actually being pushed around. A patty that sat still and then vanished
+        # was lifted off the griddle, and searching wider for it just hands the
+        # track its neighbour: 129 of those jumps happened in one shift.
+        widen = 0.25 * gap if p.motion > self.static_motion else 0.0
+        if dist > min(self.gate_base + widen, self.gate_max):
             return None
         ratio = max(p.r, r) / max(min(p.r, r), 1e-6)
         if ratio > self.size_gate:
@@ -242,11 +262,21 @@ class TimerEngine:
         return cost
 
     def _trust_kf(self, p: "LivePatty", now: float) -> bool:
-        if not self.use_kf or p.kf is None:
+        """Predict only for a patty that is actually being carried.
+
+        The filter's momentum is a liability on a patty sitting still — box
+        jitter becomes phantom velocity — and an asset on one riding a spatula,
+        where the smoothed centre lags so far behind that the track snaps and
+        the same patty is born again. Motion, not age, is the axis that
+        separates the two cases.
+        """
+        if p.kf is None:
             return False
+        if self.use_kf == "motion":
+            return p.motion > self.handle_motion
         if self.use_kf == "hybrid":
             return now - p.placed_ts >= self.kf_min_age
-        return True
+        return bool(self.use_kf)
 
     def _assign(self, dets, now: float):
         """Globally optimal track -> detection assignment."""
@@ -309,37 +339,39 @@ class TimerEngine:
         return top if votes.count(top) / len(votes) >= self.face_agree else None
 
     def _face_pass(self, now: float):
-        """Flip a patty when the face it shows the griddle actually changed.
+        """A flip is a face that changed ACROSS a handling episode.
 
-        Both faces must hold still — before and after — because the unreliable
-        moments are exactly the busy ones: a spatula lifting a patty off, a hand
-        crossing it, a crop that catches griddle instead of meat. Cheese is a
-        face of its own, so a slice landing is never a flip.
+        Judging the face at an arbitrary moment was the mistake: a shadow, an
+        exposure swing or a slice of cheese all change what the camera sees
+        without anyone turning the patty. A flip has a shape — the patty is
+        picked up or shoved, then it settles showing the other side — so the
+        comparison is anchored to that episode and nothing else can imitate it.
         """
         for p in self.alive.values():
-            if p.missing_since is not None or len(p.face_hist) < 8:
+            busy = p.missing_since is not None or p.motion > self.handle_motion
+            if busy:
+                if not p.handling:
+                    p.handling = True
+                    p.face_before = self._dominant(p.face_hist, now - 6.0, now - 0.3)
+                p.settled_since = 0.0
                 continue
-            if now - p.last_seen > 0.6:
+            if not p.handling:
                 continue
-            before = self._dominant(p.face_hist, now - self.face_window * 2.4,
-                                    now - self.face_window * 1.4)
+            if not p.settled_since:
+                p.settled_since = now
+                continue
+            if now - p.settled_since < self.settle_time:
+                continue
             after = self._dominant(p.face_hist, now - self.face_window, now)
-            if after == 3:
-                # the crop is griddle, a glove or a spatula — this track lost its
-                # patty and must not be allowed to "flip" whatever it landed on
+            if after is None:
                 continue
+            before, p.handling, p.face_before = p.face_before, False, None
             if after == 2:
-                # cheese goes on the finished face — nobody flips it afterwards,
-                # and melted cheese browns into something the classifier reads
-                # as seared meat. Retire the patty from flipping.
                 p.cheesed = True
-            if p.cheesed:
+            if before is None or after == before or p.cheesed:
                 continue
-            if before is None or after is None or before == after:
-                continue
-            p.face = after
-            if 2 in (before, after):            # cheese arrived or melted away
-                continue
+            if 2 in (before, after) or 3 in (before, after):
+                continue                      # cheese landed, or the crop lost the patty
             if now - max(p.last_flip_ts, p.placed_ts) < self.flip_cooldown:
                 continue
             if now - p.side_started < self.min_side:
@@ -463,6 +495,10 @@ class TimerEngine:
                 used.add(best)
                 matched += 1
                 cx, cy, r, _cf, lab, face = dets[best]
+                if p.last_det:
+                    step = math.hypot(cx - p.last_det[0], cy - p.last_det[1]) / max(r, 1e-6)
+                    p.motion = 0.75 * p.motion + 0.25 * min(step, 3.0)
+                p.last_det = (cx, cy)
                 if lab:
                     p.lab = lab if not p.lab else tuple(
                         0.85 * o + 0.15 * n for o, n in zip(p.lab, lab))
@@ -507,7 +543,7 @@ class TimerEngine:
             # (the Kalman prediction closes that distance next frame), not
             # mint a duplicate id. Touching neighbours sit 2r apart — safe.
             def near(q):
-                qx, qy = q.kf.peek(now) if self._trust_kf(q, now) else (q.cx, q.cy)
+                qx, qy = q.kf.peek(now) if q.kf else (q.cx, q.cy)
                 return math.hypot(cx - qx, cy - qy) < self.birth_suppress * max(q.r, r)
             if any(near(q) for q in self.alive.values()):
                 continue
@@ -530,7 +566,8 @@ class TimerEngine:
 
         # removals
         for pid in [pid for pid, p in self.alive.items()
-                    if p.missing_since and now - p.missing_since > self.removed_after]:
+                    if p.missing_since and now - p.missing_since >
+                    (self.removed_after if p.motion > self.static_motion else self.lifted_after)]:
             p = self.alive.pop(pid)
             p.side_time[p.side] += p.missing_since - p.side_started
             p.side_started = p.missing_since
