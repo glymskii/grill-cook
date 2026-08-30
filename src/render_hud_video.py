@@ -96,9 +96,9 @@ def main():
         cv2.polylines(frame, [poly_px], True, GREEN, 3, cv2.LINE_AA)
 
         any_over = False
-        for p in snap["patties"]:
+        for p in [q for q in snap["patties"] if q.get("missing_for", 0) <= 0.4]:
             x, y = int(p["x"] * fw), int(p["y"] * fh)
-            r = max(int(p["r"] * fw * 1.25), 58)
+            r = max(int(p["r"] * fw * 0.95), 46)
             remain = p["deadline"] - t
             ring, over = BLUE, False
             if remain <= -tl:
@@ -120,9 +120,9 @@ def main():
                 mm_, ss = divmod(int(abs(remain)), 60)
                 put(frame, f"{'+' if remain < 0 else ''}{mm_}:{ss:02d}",
                     (x, y + r // 6), r / 78, WHITE, 3)
-                put(frame, f"side {p['side']} - #{p['pid']}", (x, y + int(r * 0.52)),
-                    r / 190, DIM, 2)
-            if p.get("bonus", 0) > 0:
+                put(frame, f"side {p['side']} - #{p['pid']}", (x, y + int(r * 0.56)),
+                    r / 230, DIM, 2)
+            if p.get("bonus", 0) > 0 and r > 70:
                 put(frame, f"carry +{p['bonus']:.0f}s", (x, y + int(r * 0.8)),
                     r / 210, AMBER, 2)
 

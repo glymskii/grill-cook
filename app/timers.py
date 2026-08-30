@@ -84,6 +84,7 @@ class LivePatty:
     bonus: float = 0.0            # early-flip shortfall carried onto the new side
     flip_feedback: str | None = None       # optimal | early | late, for the HUD
     lab: tuple | None = None               # mean colour, for identity across gaps
+    lab_hist: list = field(default_factory=list)   # (t, lab) for crust-change flips
     kf: KF | None = None
 
     def elapsed(self, now: float) -> float:
@@ -93,12 +94,12 @@ class LivePatty:
 
 
 class TimerEngine:
-    def __init__(self, targets: dict, flip_gap_min=1.2, removed_after=9.0,
+    def __init__(self, targets: dict, flip_gap_min=1.2, removed_after=6.0,
                  flip_cooldown=30.0, min_side_before_flip=25.0, assoc_frac=1.6,
                  birth_conf=0.30, gate_base=1.45, gate_max=2.6, size_gate=1.55,
                  colour_scale=26.0, revive_window=60.0, revive_colour=22.0,
                  overlap_frac=0.55, use_kf=False, birth_suppress=1.2,
-                 kf_min_age=20.0):
+                 kf_min_age=20.0, colour_win=2.5, flip_dl=22.0, topping_db=12.0):
         self.targets = targets                  # {"A": s, "B": s, "tol_early": s, "tol_late": s}
         self.flip_gap_min = flip_gap_min
         self.removed_after = removed_after
@@ -130,6 +131,14 @@ class TimerEngine:
         # transitions (empty start, cleaning, re-layouts) stay on the plain
         # engine where the filter's momentum does more harm than good
         self.kf_min_age = kf_min_age
+        # A smash flip never lifts the patty clear of the frame, so waiting for
+        # it to disappear misses the event entirely. The crust does the talking:
+        # the face swaps from raw to seared within a couple of seconds. Cheese
+        # lands just as fast, but it drives b* up (yellow) while a flip drives
+        # L* down (dark) — direction separates them.
+        self.colour_win = colour_win
+        self.flip_dl = flip_dl
+        self.topping_db = topping_db
         self.alive: dict[int, LivePatty] = {}
         self.done: list[dict] = []
         self.next_pid = 1
@@ -271,6 +280,38 @@ class TimerEngine:
         self.revived += 1
         return q
 
+    def _crust_flipped(self, p: "LivePatty", now: float) -> bool:
+        """True when the visible face just went from raw to seared."""
+        if not p.lab or not p.lab_hist:
+            return False
+        ref = None
+        for (t, lab) in p.lab_hist:
+            if now - t >= self.colour_win:
+                ref = lab
+            else:
+                break
+        if ref is None:
+            return False
+        if p.lab[2] - ref[2] > self.topping_db:      # cheese or sauce, not a flip
+            return False
+        return (ref[0] - p.lab[0]) >= self.flip_dl
+
+    def _do_flip(self, p: "LivePatty", now: float, elapsed: float, source: str):
+        grade = self._grade_flip(p.side, elapsed)
+        p.bonus = round(self.targets[p.side] - elapsed, 1) if grade == "early" else 0.0
+        p.side_time[p.side] = elapsed
+        p.side = "B" if p.side == "A" else "A"
+        p.side_started = now
+        p.flips += 1
+        p.last_flip_ts = now
+        p.flip_feedback = grade
+        p.lab_hist.clear()                            # new face, new baseline
+        self.session["flips"] += 1
+        self.session[grade] += 1
+        self.session["streak"] = self.session["streak"] + 1 if grade == "optimal" else 0
+        self._emit("flip", p, {"grade": grade, "elapsed": round(elapsed, 1),
+                               "bonus": p.bonus, "via": source})
+
     def _on_return(self, p: "LivePatty", now: float):
         """A patty is visible again: decide whether the gap was a flip.
 
@@ -285,21 +326,7 @@ class TimerEngine:
         seasoned = (p.missing_since - p.side_started) >= self.min_side
         if long_enough and cooled and seasoned:
             elapsed = p.side_time[p.side] + (p.missing_since - p.side_started)
-            grade = self._grade_flip(p.side, elapsed)
-            # an early flip is fixable: the heat the old side missed is owed by
-            # the new side, so its target grows by the gap
-            p.bonus = round(self.targets[p.side] - elapsed, 1) if grade == "early" else 0.0
-            p.side_time[p.side] = elapsed
-            p.side = "B" if p.side == "A" else "A"
-            p.side_started = now
-            p.flips += 1
-            p.last_flip_ts = now
-            p.flip_feedback = grade
-            self.session["flips"] += 1
-            self.session[grade] += 1
-            self.session["streak"] = self.session["streak"] + 1 if grade == "optimal" else 0
-            self._emit("flip", p, {"grade": grade, "elapsed": round(elapsed, 1),
-                                   "bonus": p.bonus})
+            self._do_flip(p, now, elapsed, "gap")
         # else: a short dropout simply folds back into the running side
         p.missing_since = None
 
@@ -324,6 +351,10 @@ class TimerEngine:
                 if lab:
                     p.lab = lab if not p.lab else tuple(
                         0.85 * o + 0.15 * n for o, n in zip(p.lab, lab))
+                    p.lab_hist.append((now, p.lab))
+                    cut = now - 3 * self.colour_win
+                    while p.lab_hist and p.lab_hist[0][0] < cut:
+                        p.lab_hist.pop(0)
                 if p.kf is None:
                     p.kf = KF(cx, cy, now)
                 p.kf.update(cx, cy, now)
@@ -334,6 +365,12 @@ class TimerEngine:
                     p.cy = 0.7 * p.cy + 0.3 * cy
                 p.r = 0.8 * p.r + 0.2 * r
                 self._on_return(p, now)
+                if (p.missing_since is None
+                        and now - max(p.last_flip_ts, p.placed_ts) >= self.flip_cooldown
+                        and now - p.side_started >= self.min_side
+                        and self._crust_flipped(p, now)):
+                    self._do_flip(p, now, p.side_time[p.side] + (now - p.side_started),
+                                  "crust")
                 p.last_seen = now
             else:
                 if p.missing_since is None:
@@ -434,6 +471,7 @@ class TimerEngine:
                 "bonus": p.bonus,
                 "deadline": round(now - elapsed + target, 2),
                 "missing": p.missing_since is not None,
+                "missing_for": round(now - p.missing_since, 1) if p.missing_since else 0.0,
                 "feedback": fb,
             })
         return {"patties": out, "session": dict(self.session), "done": len(self.done),

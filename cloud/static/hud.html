@@ -119,7 +119,9 @@ function draw(){
   }
   const now=Date.now()/1000+offset;
   let anyOver=false;
-  for(const p of (state.patties||[])){
+  // a patty the detector cannot see for over a second is not on screen either:
+  // the engine keeps its history for revival, the cook sees only reality
+  for(const p of (state.patties||[]).filter(q=>(q.missing_for||0)<=0.4)){
     const x=ox+p.x*fw*s,y=oy+p.y*fh*s,r=Math.max(28*devicePixelRatio,p.r*fw*s);
     const remain=p.deadline-now,tol=state.targets?state.targets.tol_late:15;
     const frac=Math.min(1,p.elapsed/(p.target||1)+(now-(state.server_ts||now))/(p.target||1));
