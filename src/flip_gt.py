@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "app"))
 import timers                                              # noqa: E402
 
-DETS = ROOT / "data/mot_dets_full.json"
+DETS = ROOT / "data/mot_dets_full_faces.json"
 VIDEO = ROOT / "data/IMG_6635.mov"
 POOL = ROOT / "data/flip_candidates.json"
 VERDICTS = ROOT / "data/flip_verdicts.json"

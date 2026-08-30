@@ -86,6 +86,9 @@ class LivePatty:
     lab: tuple | None = None               # mean colour, for identity across gaps
     lab_hist: list = field(default_factory=list)   # (t, lab) for crust-change flips
     crust_pending: tuple | None = None      # (t_change, ref_L, crowd_L) awaiting proof
+    face_hist: list = field(default_factory=list)   # recent face classes (0 raw/1 cooked/2 cheese)
+    face: int | None = None                 # stable face, changes only on agreement
+    cheesed: bool = False                   # cheese went on: this patty is finished
     kf: KF | None = None
 
     def elapsed(self, now: float) -> float:
@@ -101,7 +104,7 @@ class TimerEngine:
                  colour_scale=26.0, revive_window=60.0, revive_colour=22.0,
                  overlap_frac=0.55, use_kf=False, birth_suppress=1.2,
                  kf_min_age=20.0, colour_win=2.5, flip_dl=22.0, topping_db=12.0,
-                 crust_confirm=4.0):
+                 crust_confirm=4.0, face_window=3.0, face_agree=0.85):
         self.targets = targets                  # {"A": s, "B": s, "tol_early": s, "tol_late": s}
         self.flip_gap_min = flip_gap_min
         self.removed_after = removed_after
@@ -149,6 +152,12 @@ class TimerEngine:
         # flip does — for a second or two. A real flip leaves it dark for good,
         # so a candidate has to still be dark after this long to count.
         self.crust_confirm = crust_confirm
+        # Brightness thresholds could not tell a flip from cheese landing or a
+        # spatula shadow — 85% of their flips were false. The face classifier
+        # names what it sees instead, and a face only changes when most of the
+        # recent votes agree, so one bad frame cannot flip a patty.
+        self.face_window = face_window
+        self.face_agree = face_agree
         self.alive: dict[int, LivePatty] = {}
         self.done: list[dict] = []
         self.next_pid = 1
@@ -206,15 +215,16 @@ class TimerEngine:
     # ---- association ---------------------------------------------------------
     @staticmethod
     def _norm_det(d):
-        """(cx, cy, r[, conf][, lab]) -> a uniform 5-tuple."""
+        """(cx, cy, r[, conf][, lab][, face]) -> a uniform 6-tuple."""
         d = tuple(d)
         return (d[0], d[1], d[2],
                 d[3] if len(d) > 3 else 1.0,
-                d[4] if len(d) > 4 else None)
+                d[4] if len(d) > 4 else None,
+                d[5] if len(d) > 5 else None)
 
     def _cost(self, p: "LivePatty", det, now: float):
         """Match cost for one track/detection pair, or None if impossible."""
-        cx, cy, r, _cf, lab = det
+        cx, cy, r, _cf, lab, _fc = det
         ref = max((p.r + r) / 2, 1e-6)
         ex, ey = p.kf.peek(now) if self._trust_kf(p, now) else (p.cx, p.cy)
         dist = math.hypot(cx - ex, cy - ey) / ref
@@ -264,7 +274,7 @@ class TimerEngine:
         Without this, every occlusion longer than removed_after mints a fresh id
         with reset timers — the single biggest source of track fragments.
         """
-        cx, cy, r, _cf, lab = det
+        cx, cy, r, _cf, lab, _fc = det
         best, best_cost = None, 1e9
         for i, (died, q) in enumerate(self.dead):
             gap = now - died
@@ -289,6 +299,52 @@ class TimerEngine:
         self.done = [d for d in self.done if d["pid"] != q.pid]
         self.revived += 1
         return q
+
+    def _dominant(self, hist, t0: float, t1: float):
+        """The face this patty held between t0 and t1, if it held one at all."""
+        votes = [f for (t, f) in hist if t0 <= t <= t1]
+        if len(votes) < 4:
+            return None
+        top = max(set(votes), key=votes.count)
+        return top if votes.count(top) / len(votes) >= self.face_agree else None
+
+    def _face_pass(self, now: float):
+        """Flip a patty when the face it shows the griddle actually changed.
+
+        Both faces must hold still — before and after — because the unreliable
+        moments are exactly the busy ones: a spatula lifting a patty off, a hand
+        crossing it, a crop that catches griddle instead of meat. Cheese is a
+        face of its own, so a slice landing is never a flip.
+        """
+        for p in self.alive.values():
+            if p.missing_since is not None or len(p.face_hist) < 8:
+                continue
+            if now - p.last_seen > 0.6:
+                continue
+            before = self._dominant(p.face_hist, now - self.face_window * 2.4,
+                                    now - self.face_window * 1.4)
+            after = self._dominant(p.face_hist, now - self.face_window, now)
+            if after == 3:
+                # the crop is griddle, a glove or a spatula — this track lost its
+                # patty and must not be allowed to "flip" whatever it landed on
+                continue
+            if after == 2:
+                # cheese goes on the finished face — nobody flips it afterwards,
+                # and melted cheese browns into something the classifier reads
+                # as seared meat. Retire the patty from flipping.
+                p.cheesed = True
+            if p.cheesed:
+                continue
+            if before is None or after is None or before == after:
+                continue
+            p.face = after
+            if 2 in (before, after):            # cheese arrived or melted away
+                continue
+            if now - max(p.last_flip_ts, p.placed_ts) < self.flip_cooldown:
+                continue
+            if now - p.side_started < self.min_side:
+                continue
+            self._do_flip(p, now, p.side_time[p.side] + (now - p.side_started), "face")
 
     def _crust_pass(self, now: float):
         """Flip the patties whose crust darkened against their neighbours — and stayed dark.
@@ -358,6 +414,7 @@ class TimerEngine:
         p.flip_feedback = grade
         p.lab_hist.clear()                            # new face, new baseline
         p.crust_pending = None
+        p.face_hist.clear()
         self.session["flips"] += 1
         self.session[grade] += 1
         self.session["streak"] = self.session["streak"] + 1 if grade == "optimal" else 0
@@ -405,7 +462,7 @@ class TimerEngine:
             if best is not None:
                 used.add(best)
                 matched += 1
-                cx, cy, r, _cf, lab = dets[best]
+                cx, cy, r, _cf, lab, face = dets[best]
                 if lab:
                     p.lab = lab if not p.lab else tuple(
                         0.85 * o + 0.15 * n for o, n in zip(p.lab, lab))
@@ -413,6 +470,11 @@ class TimerEngine:
                     cut = now - 6 * self.colour_win
                     while p.lab_hist and p.lab_hist[0][0] < cut:
                         p.lab_hist.pop(0)
+                if face is not None:
+                    p.face_hist.append((now, face))
+                    cut = now - 12.0
+                    while p.face_hist and p.face_hist[0][0] < cut:
+                        p.face_hist.pop(0)
                 if p.kf is None:
                     p.kf = KF(cx, cy, now)
                 p.kf.update(cx, cy, now)
@@ -429,12 +491,15 @@ class TimerEngine:
                     p.missing_since = now
 
         self.match_stat = (matched, len(self.alive))
-        self._crust_pass(now)
+        if any(d[5] is not None for d in dets):
+            self._face_pass(now)
+        else:
+            self._crust_pass(now)
 
         # unmatched detections become new patties — but only confident ones;
         # a flickering low-conf blob may extend a track, never found one
         for i, det in enumerate(dets):
-            cx, cy, r, cf, lab = det
+            cx, cy, r, cf, lab, face = det
             if i in used or cf < self.birth_conf:
                 continue
             # no births inside an existing track's reach: a detection that
@@ -456,7 +521,7 @@ class TimerEngine:
                 continue
             p = LivePatty(self.next_pid, cx, cy, r, placed_ts=now,
                           side_started=now, last_seen=now, lab=lab,
-                          kf=KF(cx, cy, now))
+                          kf=KF(cx, cy, now), face=face)
             self.next_pid += 1
             self.alive[p.pid] = p
             self._emit("placed", p)
