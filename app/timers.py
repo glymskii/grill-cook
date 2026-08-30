@@ -85,6 +85,7 @@ class LivePatty:
     flip_feedback: str | None = None       # optimal | early | late, for the HUD
     lab: tuple | None = None               # mean colour, for identity across gaps
     lab_hist: list = field(default_factory=list)   # (t, lab) for crust-change flips
+    crust_pending: tuple | None = None      # (t_change, ref_L, crowd_L) awaiting proof
     kf: KF | None = None
 
     def elapsed(self, now: float) -> float:
@@ -99,7 +100,8 @@ class TimerEngine:
                  birth_conf=0.30, gate_base=1.45, gate_max=2.6, size_gate=1.55,
                  colour_scale=26.0, revive_window=60.0, revive_colour=22.0,
                  overlap_frac=0.55, use_kf=False, birth_suppress=1.2,
-                 kf_min_age=20.0, colour_win=2.5, flip_dl=22.0, topping_db=12.0):
+                 kf_min_age=20.0, colour_win=2.5, flip_dl=22.0, topping_db=12.0,
+                 crust_confirm=4.0):
         self.targets = targets                  # {"A": s, "B": s, "tol_early": s, "tol_late": s}
         self.flip_gap_min = flip_gap_min
         self.removed_after = removed_after
@@ -137,8 +139,16 @@ class TimerEngine:
         # lands just as fast, but it drives b* up (yellow) while a flip drives
         # L* down (dark) — direction separates them.
         self.colour_win = colour_win
+        # the camera rides its own auto-exposure: when the cook leans in, every
+        # patty darkens at once. Only a change RELATIVE to the rest of the
+        # griddle is a flip — absolute darkening is the room, not the meat.
+        self.lum_hist: list[tuple[float, float]] = []
         self.flip_dl = flip_dl
         self.topping_db = topping_db
+        # A spatula sliding under a patty to lift it off darkens it just like a
+        # flip does — for a second or two. A real flip leaves it dark for good,
+        # so a candidate has to still be dark after this long to count.
+        self.crust_confirm = crust_confirm
         self.alive: dict[int, LivePatty] = {}
         self.done: list[dict] = []
         self.next_pid = 1
@@ -280,21 +290,62 @@ class TimerEngine:
         self.revived += 1
         return q
 
-    def _crust_flipped(self, p: "LivePatty", now: float) -> bool:
-        """True when the visible face just went from raw to seared."""
-        if not p.lab or not p.lab_hist:
-            return False
-        ref = None
-        for (t, lab) in p.lab_hist:
-            if now - t >= self.colour_win:
-                ref = lab
-            else:
-                break
-        if ref is None:
-            return False
-        if p.lab[2] - ref[2] > self.topping_db:      # cheese or sauce, not a flip
-            return False
-        return (ref[0] - p.lab[0]) >= self.flip_dl
+    def _crust_pass(self, now: float):
+        """Flip the patties whose crust darkened against their neighbours — and stayed dark.
+
+        Absolute darkening is the camera's auto-exposure: when the cook leans
+        in, the whole griddle dims and every patty looks flipped. Comparing each
+        patty to the median change of the others cancels that. A spatula lifting
+        a patty off the griddle also darkens it, so the change must still hold
+        crust_confirm seconds later before it counts as a flip.
+        """
+        vis = [p for p in self.alive.values()
+               if p.missing_since is None and p.lab and p.lab_hist]
+        if not vis:
+            return
+        crowd_now = sorted(p.lab[0] for p in vis)[len(vis) // 2]
+
+        # --- confirm or drop candidates raised earlier -----------------------
+        for p in vis:
+            if not p.crust_pending:
+                continue
+            t0, ref_l, crowd_ref = p.crust_pending
+            if now - t0 < self.crust_confirm:
+                continue
+            still = (ref_l - p.lab[0]) - (crowd_ref - crowd_now)
+            p.crust_pending = None
+            if still >= self.flip_dl * 0.7:
+                p.side_started = min(p.side_started, t0)      # credit from the turn
+                self._do_flip(p, now, p.side_time[p.side] + (t0 - p.side_started),
+                              "crust")
+
+        # --- raise new candidates -------------------------------------------
+        cands = []
+        for p in vis:
+            if p.crust_pending:
+                continue
+            ref = None
+            for (t, lab) in p.lab_hist:
+                if now - t >= self.colour_win:
+                    ref = lab
+                else:
+                    break
+            if ref is not None:
+                cands.append((p, ref[0] - p.lab[0], p.lab[2] - ref[2], ref[0]))
+        if not cands:
+            return
+        drops = sorted(d for _, d, _, _ in cands)
+        crowd = drops[len(drops) // 2] if len(cands) >= 3 else 0.0
+        for p, drop, db, ref_l in cands:
+            if db > self.topping_db:                  # cheese or sauce, not a flip
+                continue
+            if drop - crowd < self.flip_dl:
+                continue
+            if now - max(p.last_flip_ts, p.placed_ts) < self.flip_cooldown:
+                continue
+            if now - p.side_started < self.min_side:
+                continue
+            p.crust_pending = (now, ref_l, crowd_now)
 
     def _do_flip(self, p: "LivePatty", now: float, elapsed: float, source: str):
         grade = self._grade_flip(p.side, elapsed)
@@ -306,6 +357,7 @@ class TimerEngine:
         p.last_flip_ts = now
         p.flip_feedback = grade
         p.lab_hist.clear()                            # new face, new baseline
+        p.crust_pending = None
         self.session["flips"] += 1
         self.session[grade] += 1
         self.session["streak"] = self.session["streak"] + 1 if grade == "optimal" else 0
@@ -334,6 +386,12 @@ class TimerEngine:
     def update(self, dets: list[tuple[float, float, float]], now: float):
         """dets: (cx, cy, r[, conf]) in normalized coords, r = radius/frame_w."""
         self._now = now
+        lums = sorted(d[4][0] for d in dets if len(d) > 4 and d[4])
+        if lums:
+            self.lum_hist.append((now, lums[len(lums) // 2]))
+            cut = now - 4 * self.colour_win
+            while self.lum_hist and self.lum_hist[0][0] < cut:
+                self.lum_hist.pop(0)
         if now < self.freeze_until:
             return
         dets = [self._norm_det(d) for d in dets]
@@ -352,7 +410,7 @@ class TimerEngine:
                     p.lab = lab if not p.lab else tuple(
                         0.85 * o + 0.15 * n for o, n in zip(p.lab, lab))
                     p.lab_hist.append((now, p.lab))
-                    cut = now - 3 * self.colour_win
+                    cut = now - 6 * self.colour_win
                     while p.lab_hist and p.lab_hist[0][0] < cut:
                         p.lab_hist.pop(0)
                 if p.kf is None:
@@ -365,18 +423,13 @@ class TimerEngine:
                     p.cy = 0.7 * p.cy + 0.3 * cy
                 p.r = 0.8 * p.r + 0.2 * r
                 self._on_return(p, now)
-                if (p.missing_since is None
-                        and now - max(p.last_flip_ts, p.placed_ts) >= self.flip_cooldown
-                        and now - p.side_started >= self.min_side
-                        and self._crust_flipped(p, now)):
-                    self._do_flip(p, now, p.side_time[p.side] + (now - p.side_started),
-                                  "crust")
                 p.last_seen = now
             else:
                 if p.missing_since is None:
                     p.missing_since = now
 
         self.match_stat = (matched, len(self.alive))
+        self._crust_pass(now)
 
         # unmatched detections become new patties — but only confident ones;
         # a flickering low-conf blob may extend a track, never found one
