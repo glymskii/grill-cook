@@ -62,6 +62,8 @@ class Slot:
     prev_crop: object = None       # last frame's pixels at this place
     disturb: float = 0.0           # how much they just changed
     quiet_ts: float = 0.0          # last moment nothing was happening here
+    face_quiet: int = 0            # readings taken while settled and occupied
+    face_quiet_other: int = 0      # ...of which called this patty 'not a patty'
 
     def elapsed(self, now: float) -> float:
         ref = self.absent_since if self.absent_since is not None else now
@@ -161,6 +163,12 @@ class SlotEngine:
             return None
         return tuple(st.mean(v[i] for v in labs) for i in range(3))
 
+    def _trust_face(self, s: Slot) -> bool:
+        """Does the face model make sense at this place at all?"""
+        if s.face_quiet < 40:
+            return True                    # not enough evidence to distrust it
+        return s.face_quiet_other / s.face_quiet < 0.5
+
     # ---- the flip decision ---------------------------------------------------
     def _verdict(self, s: Slot, now: float):
         """An episode is over and the crop has been quiet: what happened here?
@@ -178,7 +186,7 @@ class SlotEngine:
         before_face, before_lab = ep["face_before"], ep["lab_before"]
         after_face = self._dominant(s.face_hist, now - self.face_window, now)
         after_lab = self._mean_lab(s.lab_hist, now - self.face_window, now)
-        if after_face == 3 or before_face == 3:
+        if (after_face == 3 or before_face == 3) and self._trust_face(s):
             return bump("no/other-crop")            # the crop lost the patty
         # The colour of the crop only means something if the crop is the patty.
         # Reviewed by eye, the false verdicts that survived everything else were
@@ -307,6 +315,16 @@ class SlotEngine:
             for (s, _), cls in zip(crops, self.face_model([c for _, c in crops])):
                 s.face_hist.append((now, int(cls)))
                 s.face_hist = [x for x in s.face_hist if x[0] >= now - 12]
+                # A place that is occupied and quiet holds a patty, by
+                # construction. If the model calls that "not a patty" it is out
+                # of its training distribution here — measured on the smash
+                # session, where it says "other" for 85-100% of settled patties
+                # and with the same 0.95+ confidence it uses on a real sausage,
+                # so no threshold separates them. Rather than veto every verdict
+                # on that station, the slot stops trusting the reading.
+                if s.absent_since is None and s.disturb < self.hot and not s.episode:
+                    s.face_quiet += 1
+                    s.face_quiet_other += int(cls == 3)
 
     @staticmethod
     def _ring(lab, s, dets, fw, fh):
