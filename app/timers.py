@@ -95,6 +95,7 @@ class LivePatty:
     episode_gap: float = 0.0                # longest disappearance in this episode
     face_before: int | None = None          # face it showed before this episode
     settled_since: float = 0.0              # when it last came to rest
+    other_since: float = 0.0                # first frame the crop stopped being a patty
     kf: KF | None = None
 
     def elapsed(self, now: float) -> float:
@@ -106,21 +107,24 @@ class LivePatty:
 class TimerEngine:
     def __init__(self, targets: dict, flip_gap_min=1.2, removed_after=6.0,
                  flip_cooldown=45.0, min_side_before_flip=25.0, assoc_frac=1.6,
-                 birth_conf=0.30, gate_base=1.45, gate_max=1.8, size_gate=1.55,
+                 birth_conf=0.55, gate_base=1.45, gate_max=1.8, size_gate=1.55,
                  colour_scale=26.0, revive_window=60.0, revive_colour=22.0,
                  overlap_frac=0.55, use_kf="motion", birth_suppress=1.2,
                  kf_min_age=20.0, colour_win=2.5, flip_dl=22.0, topping_db=12.0,
                  crust_confirm=4.0, face_window=3.0, face_agree=0.85,
                  static_motion=0.12, lifted_after=2.0, handle_motion=0.35,
-                 settle_time=4.0):
+                 settle_time=4.0, other_grace=2.0):
         self.targets = targets                  # {"A": s, "B": s, "tol_early": s, "tol_late": s}
         self.flip_gap_min = flip_gap_min
         self.removed_after = removed_after
         self.flip_cooldown = flip_cooldown
         self.min_side = min_side_before_flip
         self.assoc_frac = assoc_frac
-        self.birth_conf = birth_conf   # hysteresis: new tracks need this much,
-                                       # existing ones survive on far less
+        # Hysteresis: a patty being put on the griddle is unmistakable, so a new
+        # track has to clear a high bar; an established one survives on far less.
+        # The 0.3 blobs that used to qualify were griddle marks in the dark half
+        # of the frame, and each one drew a ring the cook could not explain.
+        self.birth_conf = birth_conf
         # identity gates. Patties sit edge to edge, so a centre may be barely
         # more than one radius away from the WRONG patty: the gate has to stay
         # tight, and only widen for a track that has been missing (the cook may
@@ -168,6 +172,7 @@ class TimerEngine:
         # a static patty that disappears has been lifted off; holding its track
         # open for the full removed_after only gives it time to steal a neighbour
         self.lifted_after = lifted_after
+        self.other_grace = other_grace
         self.handle_motion = handle_motion
         self.settle_time = settle_time
         self.face_window = face_window
@@ -180,6 +185,7 @@ class TimerEngine:
         self.freeze_until = 0.0                 # settle window after a scene cut
         self.scene_cut_ts = 0.0
         self.has_faces = False
+        self.rejected_other = 0
         self.match_stat = (0, 0)                # (matched alive, total alive) per frame
         self._now = 0.0                         # engine clock, for offline replay
 
@@ -349,7 +355,23 @@ class TimerEngine:
         picked up or shoved, then it settles showing the other side — so the
         comparison is anchored to that episode and nothing else can imitate it.
         """
+        doomed = []
         for p in self.alive.values():
+            # The face is read every frame, not only when an episode ends: cheese
+            # is laid on a patty that never moves, so waiting for a handling
+            # episode left the HUD counting down and shouting FLIP at a patty
+            # that was already finished.
+            stable = self._dominant(p.face_hist, now - self.face_window, now)
+            if stable is not None:
+                p.face = stable
+                if stable == 2:
+                    p.cheesed = True
+                if stable == 3:
+                    p.other_since = p.other_since or now
+                    if now - p.other_since > self.other_grace:
+                        doomed.append(p.pid)   # the crop is griddle, not a patty
+                else:
+                    p.other_since = 0.0
             busy = p.missing_since is not None or p.motion > self.handle_motion
             if busy:
                 if not p.handling:
@@ -390,6 +412,11 @@ class TimerEngine:
             if now - p.side_started < self.min_side:
                 continue
             self._do_flip(p, now, p.side_time[p.side] + (now - p.side_started), "face")
+
+        for pid in doomed:
+            q = self.alive.pop(pid, None)
+            if q is not None:
+                self._emit("dropped", q, {"reason": "not-a-patty"})
 
     def _crust_pass(self, now: float):
         """Flip the patties whose crust darkened against their neighbours — and stayed dark.
@@ -501,6 +528,7 @@ class TimerEngine:
         if now < self.freeze_until:
             return
         dets = [self._norm_det(d) for d in dets]
+        self.rejected_other = sum(1 for d in dets if d[5] == 3)
         used = set()
         matched = 0
         # Solve the assignment globally, not greedily: with patties packed edge
@@ -555,6 +583,10 @@ class TimerEngine:
         for i, det in enumerate(dets):
             cx, cy, r, cf, lab, face = det
             if i in used or cf < self.birth_conf:
+                continue
+            if face == 3:
+                # griddle, a glove or a spatula: it may keep an existing track
+                # alive through a bad frame, but it must never start a new one
                 continue
             # no births inside an existing track's reach: a detection that
             # missed its gate by a hair must wait for the track to catch up
@@ -643,6 +675,8 @@ class TimerEngine:
                 "elapsed": round(elapsed, 1), "target": target,
                 "bonus": p.bonus,
                 "deadline": round(now - elapsed + target, 2),
+                "cheesed": p.cheesed,
+                "face": p.face,
                 "missing": p.missing_since is not None,
                 "missing_for": round(now - p.missing_since, 1) if p.missing_since else 0.0,
                 "feedback": fb,

@@ -125,6 +125,19 @@ function draw(){
     const x=ox+p.x*fw*s,y=oy+p.y*fh*s,r=Math.max(28*devicePixelRatio,p.r*fw*s);
     const remain=p.deadline-now,tol=state.targets?state.targets.tol_late:15;
     const frac=Math.min(1,p.elapsed/(p.target||1)+(now-(state.server_ts||now))/(p.target||1));
+    if(p.cheesed){
+      // cheese is on: this patty is dressed and waiting to leave the griddle,
+      // so it gets a calm badge instead of a flip countdown
+      ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.fillStyle='rgba(20,27,35,0.5)';ctx.fill();
+      ctx.lineWidth=4*devicePixelRatio;ctx.strokeStyle='#3ccbe8';ctx.stroke();
+      ctx.fillStyle='#3ccbe8';ctx.textAlign='center';
+      ctx.font=600+' '+Math.round(r*0.3)+'px system-ui';
+      ctx.fillText('DRESSED',x,y-r*0.05);
+      const tt=Math.floor(p.elapsed);
+      ctx.fillStyle='#e8eef5';ctx.font=600+' '+Math.round(r*0.42)+'px system-ui';
+      ctx.fillText(Math.floor(tt/60)+':'+String(tt%60).padStart(2,'0'),x,y+r*0.42);
+      continue;
+    }
     let ring='#3c74c9',fill='rgba(20,27,35,0.55)';
     if(remain<=-tol){ring='#e5484d';fill='rgba(229,72,77,0.30)';anyOver=true;}
     else if(remain<=3.5){ring='#f5a623';fill='rgba(245,166,35,0.22)';}

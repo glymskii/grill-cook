@@ -101,6 +101,15 @@ def main():
             r = max(int(p["r"] * fw * 0.95), 46)
             remain = p["deadline"] - t
             ring, over = BLUE, False
+            if p.get("cheesed"):
+                # cheese means finished: prompting a flip here is the one thing
+                # that makes a cook stop trusting the screen
+                cv2.circle(frame, (x, y), r, (235, 200, 60), 4, cv2.LINE_AA)
+                total = p["elapsed"] + p.get("bonus", 0)
+                mm_, ss = divmod(int(p["elapsed"]), 60)
+                put(frame, "DRESSED", (x, y - r // 8), r / 150, (235, 200, 60), 2)
+                put(frame, f"{mm_}:{ss:02d}", (x, y + int(r * 0.32)), r / 110, WHITE, 2)
+                continue
             if remain <= -tl:
                 ring, over, any_over = RED, True, True
             elif remain <= 10:
