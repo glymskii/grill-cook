@@ -220,10 +220,15 @@ def main():
             put(frame, label, (cxx, yy), 0.52, DIM, 1, centre=False)
         yy += 12
         mmss = lambda v: f"{int(v) // 60}:{int(v) % 60:02d}"
-        for p in live[:12]:
-            yy += 40
-            if yy > fh - 30:
+        # A log that quietly drops rows is worse than no log: the pitch shrinks
+        # to fit a busy plate, and anything still left over is counted out loud.
+        pitch = 40 if len(live) <= 20 else max(26, (fh - 60 - yy) // max(len(live), 1))
+        shown = 0
+        for p in live:
+            yy += pitch
+            if yy > fh - 34:
                 break
+            shown += 1
             hot = RED if p["deadline"] - t <= -tl and not p.get("cheesed") else None
             tone = (235, 200, 60) if p.get("cheesed") else (hot or WHITE)
             put(frame, f"{p.get('no', p['pid'])}", (col[0], yy), 0.7, tone, 2, centre=False)
@@ -236,6 +241,9 @@ def main():
             ch = p.get("cheese_for", 0)
             put(frame, mmss(ch) if ch else "-", (col[4], yy), 0.62,
                 (235, 200, 60) if ch else DIM, 2, centre=False)
+        if shown < len(live):
+            put(frame, f"+{len(live) - shown} more on the plate",
+                (col[0], min(yy + pitch, fh - 12)), 0.55, DIM, 1, centre=False)
 
         # --- toast -----------------------------------------------------------
         live_toasts = [x for x in toasts if x[0] > t and x[1]]
