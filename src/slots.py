@@ -64,6 +64,7 @@ class Slot:
     quiet_ts: float = 0.0          # last moment nothing was happening here
     face_quiet: int = 0            # readings taken while settled and occupied
     face_quiet_other: int = 0      # ...of which called this patty 'not a patty'
+    cheesed_ts: float = 0.0        # when the slice landed
 
     def elapsed(self, now: float) -> float:
         ref = self.absent_since if self.absent_since is not None else now
@@ -78,7 +79,8 @@ class SlotEngine:
                  min_side_before_flip=25.0, reanchor_tol=0.35, migrate_frac=3.0,
                  migrate_window=4.0, other_grace=2.0, episode_min=0.6,
                  hot=0.35, topping_db=15.0, room_max=25.0, hold_frac=0.8,
-                 cheese_window=4.0, face_model=None):
+                 cheese_window=4.0, occupied_dist=40.0, max_backdate=30.0,
+                 history_step=0.5, other_veto_conf=0.7, face_model=None):
         self.targets = targets
         self.claim_frac = claim_frac       # how far from its anchor a patty may be found
         self.settle_time = settle_time     # rest needed before the anchor is frozen
@@ -105,9 +107,21 @@ class SlotEngine:
         self.room_max = room_max           # light moved this much: do not judge
         self.hold_frac = hold_frac         # the patty must hold its place to be judged
         self.cheese_window = cheese_window # sustained 'cheese' that retires a slot
+        self.occupied_dist = occupied_dist # crop this far from the ring = occupied
+        self.max_backdate = max_backdate
+        self.history_step = history_step
+        # a confident box is a patty even if the face model dislikes the crop:
+        # an unsmashed ball of mince reads as 'other' and used to block the birth
+        self.other_veto_conf = other_veto_conf
         # optional callable: list of BGR crops -> list of class ids. Given one,
         # the face is read at the anchor instead of at the detection box.
         self.face_model = face_model
+        self.history: list = []            # (t, small Lab frame) for back-dating
+        # Ticket numbers the cook sees. Assigned after back-dating and ordered by
+        # when the meat landed, not by when we recognised it — the two patties put
+        # down first were being shown as #2 and #3 because a ball of mince takes
+        # seconds to become a patty to the detector.
+        self.order: list = []              # (placed_ts, sid), sorted
         self.slots: dict[int, Slot] = {}
         self.next_sid = 1
         self.done: list[dict] = []
@@ -164,6 +178,35 @@ class SlotEngine:
             return None
         return tuple(st.mean(v[i] for v in labs) for i in range(3))
 
+    def _backdate(self, s: Slot, now: float):
+        """Start the clock when the meat landed, not when we recognised it.
+
+        A ball of mince is not a patty to the detector — it is pale, lumpy and
+        half under the cook's hand — so a slot is often born many seconds after
+        the meat hits the plate. Measured on the smash session: two patties were
+        on the griddle from 8 s and 13 s but their slots opened at 21.4 s and
+        22.6 s, so their cook time was short by 9-13 seconds. Once the place is
+        known, its own past answers the question: walk back while the crop is
+        still unlike the bare griddle around it, and stop where it is not.
+        """
+        import numpy as np
+        first = s.placed_ts
+        for t, sm in reversed(self.history):
+            if t >= s.placed_ts or s.placed_ts - t > self.max_backdate:
+                continue
+            sh, sw = sm.shape[:2]
+            R, cx, cy = s.ar * sw, s.ax * sw, s.ay * sh
+            yy, xx = np.ogrid[0:sh, 0:sw]
+            d = np.hypot(xx - cx, yy - cy)
+            inner, ring = sm[d <= 0.6 * R], sm[(d >= 1.15 * R) & (d <= 1.9 * R)]
+            if len(inner) < 20 or len(ring) < 40:
+                break
+            if math.dist(inner.mean(0), np.median(ring, 0)) < self.occupied_dist:
+                break                      # here the place was still bare plate
+            first = t
+        if first < s.placed_ts:
+            s.placed_ts = s.side_started = first
+
     def _trust_face(self, s: Slot) -> bool:
         """Does the face model make sense at this place at all?"""
         if s.face_quiet < 40:
@@ -217,6 +260,7 @@ class SlotEngine:
             dL = before_lab[0] - after_lab[0]
             if db <= -self.topping_db:
                 s.cheesed = True                    # a slice landed, not a turn
+                s.cheesed_ts = s.cheesed_ts or ep["t0"]
                 return bump("no/cheese")
             if dL >= self.flip_dl:
                 via = "crust"
@@ -279,6 +323,11 @@ class SlotEngine:
         # A 640-wide copy answers the same question for 1/9th of the work, and
         # the edge worker has to hold 25 fps with this in the loop.
         sm = cv2.resize(lab, (640, max(1, int(640 * fh / fw))))
+        # a thin, slow trail of the plate, kept only so a new slot can ask what
+        # its own place looked like before the meat arrived
+        if not self.history or now - self.history[-1][0] >= self.history_step:
+            self.history.append((now, cv2.resize(lab, (320, max(1, int(320 * fh / fw))))))
+            self.history = [h for h in self.history if now - h[0] <= self.max_backdate]
         for s in self.slots.values():
             if not s.anchored:
                 continue
@@ -332,7 +381,7 @@ class SlotEngine:
                 # being worked or lifted. Where the model is trusted, let it say so.
                 if self._trust_face(s) and not s.cheesed:
                     if self._dominant(s.face_hist, now - self.cheese_window, now) == 2:
-                        s.cheesed = True
+                        s.cheesed, s.cheesed_ts = True, now - self.cheese_window
 
     @staticmethod
     def _ring(lab, s, dets, fw, fh):
@@ -402,7 +451,13 @@ class SlotEngine:
                     s.cheesed = True       # with pixels, colour decides this
             if not s.anchored:
                 s.births.append((now, d[0], d[1], d[2]))
+                was = s.anchored
                 self._settle(s, now)
+                if s.anchored and not was:
+                    if self.history:
+                        self._backdate(s, now)
+                    self.order.append((s.placed_ts, s.sid))
+                    self.order.sort()
             s.absent_since = None
             s.seen_ts = now
             self._reanchor(s, now)
@@ -439,7 +494,9 @@ class SlotEngine:
 
         # --- detections nobody claimed: a new patty, or one that was moved -----
         for i, d in enumerate(dets):
-            if i in taken or d[3] < self.birth_conf or d[5] == 3:
+            if i in taken or d[3] < self.birth_conf:
+                continue
+            if d[5] == 3 and d[3] < self.other_veto_conf:
                 continue
             cx, cy, r = d[0], d[1], d[2]
             if any(math.hypot(cx - s.ax, cy - s.ay) < self.birth_suppress * max(s.ar, r)
@@ -538,12 +595,20 @@ class SlotEngine:
             target = t[s.side] + s.bonus
             elapsed = s.elapsed(now)
             fb, s.flip_feedback = s.flip_feedback, None
+            nos = {sid: i + 1 for i, (_, sid) in enumerate(self.order)}
             out.append({
-                "pid": s.sid, "x": round(s.ax, 4), "y": round(s.ay, 4),
+                "pid": s.sid, "no": nos.get(s.sid, s.sid),
+                "x": round(s.ax, 4), "y": round(s.ay, 4),
                 "r": round(s.ar, 4), "side": s.side, "flips": s.flips,
                 "elapsed": round(elapsed, 1), "target": target, "bonus": s.bonus,
                 "deadline": round(now - elapsed + target, 2),
                 "cheesed": s.cheesed, "face": s.face,
+                "side_a": round(s.side_time["A"] + (elapsed - s.side_time[s.side]
+                                                    if s.side == "A" else 0), 1),
+                "side_b": round(s.side_time["B"] + (elapsed - s.side_time[s.side]
+                                                    if s.side == "B" else 0), 1),
+                "total": round(now - s.placed_ts, 1),
+                "cheese_for": round(now - s.cheesed_ts, 1) if s.cheesed_ts else 0.0,
                 "missing": s.absent_since is not None,
                 "missing_for": round(now - s.absent_since, 1) if s.absent_since else 0.0,
                 "feedback": fb,

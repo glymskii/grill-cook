@@ -78,8 +78,9 @@ def main():
     src_fps = cap.get(cv2.CAP_PROP_FPS)
     fw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     fh = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    ow = args.width or fw
-    oh = int(round(fh * ow / fw))
+    panel_w = int(fw * 0.26)
+    ow = args.width or (fw + panel_w)
+    oh = int(round(fh * ow / (fw + panel_w)))
     vw = cv2.VideoWriter(args.out, cv2.VideoWriter_fourcc(*"mp4v"), args.fps, (ow, oh))
     poly_px = np.array([[int(x * fw), int(y * fh)] for x, y in roi], np.int32)
 
@@ -169,8 +170,8 @@ def main():
                 mm_, ss = divmod(int(abs(remain)), 60)
                 put(frame, f"{'+' if remain < 0 else ''}{mm_}:{ss:02d}",
                     (x, y + r // 6), r / 78, WHITE, 3)
-                put(frame, f"side {p['side']} - #{p['pid']}", (x, y + int(r * 0.56)),
-                    r / 230, DIM, 2)
+                put(frame, f"side {p['side']} - #{p.get('no', p['pid'])}",
+                    (x, y + int(r * 0.56)), r / 230, DIM, 2)
             if p.get("bonus", 0) > 0 and r > 70:
                 put(frame, f"carry +{p['bonus']:.0f}s", (x, y + int(r * 0.8)),
                     r / 210, AMBER, 2)
@@ -197,6 +198,45 @@ def main():
             w = put(frame, text, (cx + off, 46), 0.78, col, 2, centre=False)
             cx += w + off + 46
 
+        # --- log panel: every patty on the plate, oldest first -----------------
+        # It lives beside the picture rather than on top of it: the griddle runs
+        # to the right edge of this frame and a panel over it would hide the very
+        # patties it is describing.
+        live = sorted(snap["patties"], key=lambda q: -q.get("total", 0))
+        pw = int(fw * 0.26)
+        canvas = np.zeros((fh, fw + pw, 3), np.uint8)
+        canvas[:, :fw] = frame
+        canvas[:, fw:] = (22, 16, 11)
+        frame = canvas
+        px0 = fw
+        yy = 74 + 44
+        put(frame, "ON THE PLATE", (px0 + 22, yy), 0.66, DIM, 2, centre=False)
+        yy += 16
+        cv2.line(frame, (px0 + 22, yy), (px0 + pw - 22, yy), (70, 58, 46), 2)
+        yy += 40
+        col = [px0 + 22, px0 + int(pw * 0.30), px0 + int(pw * 0.50),
+               px0 + int(pw * 0.70), px0 + int(pw * 0.87)]
+        for label, cxx in zip(("#", "total", "side A", "side B", "cheese"), col):
+            put(frame, label, (cxx, yy), 0.52, DIM, 1, centre=False)
+        yy += 12
+        mmss = lambda v: f"{int(v) // 60}:{int(v) % 60:02d}"
+        for p in live[:12]:
+            yy += 40
+            if yy > fh - 30:
+                break
+            hot = RED if p["deadline"] - t <= -tl and not p.get("cheesed") else None
+            tone = (235, 200, 60) if p.get("cheesed") else (hot or WHITE)
+            put(frame, f"{p.get('no', p['pid'])}", (col[0], yy), 0.7, tone, 2, centre=False)
+            put(frame, mmss(p.get("total", 0)), (col[1], yy), 0.66, WHITE, 2, centre=False)
+            for key, cxx in (("side_a", col[2]), ("side_b", col[3])):
+                v = p.get(key, 0)
+                live_side = (key == "side_a") == (p["side"] == "A")
+                put(frame, mmss(v) if v else "-", (cxx, yy), 0.62,
+                    AMBER if live_side and not p.get("cheesed") else DIM, 2, centre=False)
+            ch = p.get("cheese_for", 0)
+            put(frame, mmss(ch) if ch else "-", (col[4], yy), 0.62,
+                (235, 200, 60) if ch else DIM, 2, centre=False)
+
         # --- toast -----------------------------------------------------------
         live_toasts = [x for x in toasts if x[0] > t and x[1]]
         if live_toasts:
@@ -208,7 +248,7 @@ def main():
             frame = cv2.addWeighted(box, 0.92, frame, 0.08, 0)
             put(frame, text, (fw // 2, y0 + th + 14), 1.05, (255, 255, 255), 2)
 
-        vw.write(frame if ow == fw else
+        vw.write(frame if frame.shape[1] == ow else
                  cv2.resize(frame, (ow, oh), interpolation=cv2.INTER_AREA))
         if i % 300 == 0:
             print(f"  {t - args.start:.0f}с / {args.seconds:.0f}", flush=True)
