@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "app"))
 import slots                                           # noqa: E402
+from face_reader import FaceReader                     # noqa: E402
 
 
 def main():
@@ -32,11 +33,14 @@ def main():
     ap.add_argument("--targets", default="42,35,12,12")
     ap.add_argument("--pick", default="flip")
     ap.add_argument("--limit", type=int, default=12)
+    ap.add_argument("--no-face", action="store_true",
+                    help="read the face from the detection box, as before")
     args = ap.parse_args()
 
     ta, tb, te, tl = (float(v) for v in args.targets.split(","))
     slots.EVENTS = Path(tempfile.mkdtemp()) / "e.jsonl"
-    eng = slots.SlotEngine({"A": ta, "B": tb, "tol_early": te, "tol_late": tl})
+    eng = slots.SlotEngine({"A": ta, "B": tb, "tol_early": te, "tol_late": tl},
+                           face_model=None if args.no_face else FaceReader())
     events = []
     eng.on_event = lambda e: events.append(
         dict(e, x=getattr(eng.slots.get(e["pid"]), "ax", None),

@@ -75,7 +75,8 @@ class SlotEngine:
                  face_agree=0.6, flip_dl=18.0, flip_cooldown=45.0,
                  min_side_before_flip=25.0, reanchor_tol=0.35, migrate_frac=3.0,
                  migrate_window=4.0, other_grace=2.0, episode_min=0.6,
-                 hot=0.35, topping_db=15.0, room_max=25.0, hold_frac=0.8):
+                 hot=0.35, topping_db=15.0, room_max=25.0, hold_frac=0.8,
+                 face_model=None):
         self.targets = targets
         self.claim_frac = claim_frac       # how far from its anchor a patty may be found
         self.settle_time = settle_time     # rest needed before the anchor is frozen
@@ -101,6 +102,9 @@ class SlotEngine:
         self.topping_db = topping_db       # yellow jump that means cheese, not a turn
         self.room_max = room_max           # light moved this much: do not judge
         self.hold_frac = hold_frac         # the patty must hold its place to be judged
+        # optional callable: list of BGR crops -> list of class ids. Given one,
+        # the face is read at the anchor instead of at the detection box.
+        self.face_model = face_model
         self.slots: dict[int, Slot] = {}
         self.next_sid = 1
         self.done: list[dict] = []
@@ -259,6 +263,7 @@ class SlotEngine:
         import cv2                                   # only needed with a frame
         import numpy as np
         fh, fw = frame.shape[:2]
+        crops = []                                   # for the face model, if any
         lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
         # The ring is a median over an annulus; at 1080p that is a quarter of a
         # million pixels per slot per frame and the whole pass grinds to a halt.
@@ -288,6 +293,20 @@ class SlotEngine:
             if ring is not None:
                 s.ring_hist.append((now, ring))
                 s.ring_hist = [x for x in s.ring_hist if x[0] >= now - 12]
+            if self.face_model is not None:
+                R2 = max(6, int(s.ar * fw * 1.15))
+                c2 = frame[max(0, cy - R2):cy + R2, max(0, cx - R2):cx + R2]
+                if c2.size:
+                    crops.append((s, c2))
+        if crops:
+            # Read the face where the engine actually reasons — at the anchor.
+            # Classifying the detection box instead was hiding the retrained
+            # negatives from the verdict: with a sausage lying across a patty the
+            # box still reads "raw", while the same model on the pinned crop says
+            # "not a patty" five frames out of five.
+            for (s, _), cls in zip(crops, self.face_model([c for _, c in crops])):
+                s.face_hist.append((now, int(cls)))
+                s.face_hist = [x for x in s.face_hist if x[0] >= now - 12]
 
     @staticmethod
     def _ring(lab, s, dets, fw, fh):
@@ -342,7 +361,8 @@ class SlotEngine:
                     s.absent_since = now
                 continue
             d = dets[i]
-            s.face_hist.append((now, d[5]))
+            if frame is None or self.face_model is None:
+                s.face_hist.append((now, d[5]))
             if frame is None:                      # no pixels: fall back to the box
                 s.lab_hist.append((now, d[4]))
                 s.lab_hist = [x for x in s.lab_hist if x[0] >= now - 12]
