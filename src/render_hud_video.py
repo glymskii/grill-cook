@@ -40,7 +40,11 @@ def main():
     ap.add_argument("--dets", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--seconds", type=float, default=100.0)
+    ap.add_argument("--start", type=float, default=0.0,
+                    help="first video second to draw; the engine still replays "
+                         "everything before it, so the grill starts loaded")
     ap.add_argument("--fps", type=float, default=30.0)
+    ap.add_argument("--width", type=int, default=0, help="0 = source width")
     ap.add_argument("--targets", default="42,35,12,12")
     ap.add_argument("--roi", default="0.215,0.70;0.415,0.085;0.885,0.165;0.695,0.92")
     ap.add_argument("--cook", default="US Partner")
@@ -65,16 +69,33 @@ def main():
     src_fps = cap.get(cv2.CAP_PROP_FPS)
     fw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     fh = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    vw = cv2.VideoWriter(args.out, cv2.VideoWriter_fourcc(*"mp4v"), args.fps, (fw, fh))
+    ow = args.width or fw
+    oh = int(round(fh * ow / fw))
+    vw = cv2.VideoWriter(args.out, cv2.VideoWriter_fourcc(*"mp4v"), args.fps, (ow, oh))
     poly_px = np.array([[int(x * fw), int(y * fh)] for x, y in roi], np.int32)
 
     n_frames = int(args.seconds * args.fps)
     ri = 0
     snap = {"patties": [], "session": {"streak": 0, "optimal": 0, "flips": 0}, "done": 0}
+    # Warm the engine on everything before the window, silently: a clip that
+    # starts mid-shift must open with the grill already loaded, not with the
+    # timers being born on screen.
+    while ri < len(rows) and rows[ri]["t"] <= args.start:
+        eng.update([tuple(d) for d in rows[ri]["dets"]], rows[ri]["t"])
+        ri += 1
+    toasts.clear()
+    # Sequential decode: one seek, then grab-and-drop. Seeking per frame in a
+    # 1080p60 source costs more than decoding it.
+    src_i = int(args.start * src_fps)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, src_i)
     for i in range(n_frames):
-        t = i / args.fps
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(t * src_fps))
+        t = args.start + i / args.fps
+        want = int(t * src_fps)
+        while src_i < want:
+            cap.grab()
+            src_i += 1
         ok, frame = cap.read()
+        src_i += 1
         if not ok:
             break
         while ri < len(rows) and rows[ri]["t"] <= t:
@@ -168,9 +189,10 @@ def main():
             frame = cv2.addWeighted(box, 0.92, frame, 0.08, 0)
             put(frame, text, (fw // 2, y0 + th + 14), 1.05, (255, 255, 255), 2)
 
-        vw.write(frame)
+        vw.write(frame if ow == fw else
+                 cv2.resize(frame, (ow, oh), interpolation=cv2.INTER_AREA))
         if i % 300 == 0:
-            print(f"  {t:.0f}с / {args.seconds:.0f}", flush=True)
+            print(f"  {t - args.start:.0f}с / {args.seconds:.0f}", flush=True)
     vw.release()
     cap.release()
     print("готово:", args.out)
