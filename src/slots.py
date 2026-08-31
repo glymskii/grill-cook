@@ -78,7 +78,7 @@ class SlotEngine:
                  min_side_before_flip=25.0, reanchor_tol=0.35, migrate_frac=3.0,
                  migrate_window=4.0, other_grace=2.0, episode_min=0.6,
                  hot=0.35, topping_db=15.0, room_max=25.0, hold_frac=0.8,
-                 face_model=None):
+                 cheese_window=4.0, face_model=None):
         self.targets = targets
         self.claim_frac = claim_frac       # how far from its anchor a patty may be found
         self.settle_time = settle_time     # rest needed before the anchor is frozen
@@ -104,6 +104,7 @@ class SlotEngine:
         self.topping_db = topping_db       # yellow jump that means cheese, not a turn
         self.room_max = room_max           # light moved this much: do not judge
         self.hold_frac = hold_frac         # the patty must hold its place to be judged
+        self.cheese_window = cheese_window # sustained 'cheese' that retires a slot
         # optional callable: list of BGR crops -> list of class ids. Given one,
         # the face is read at the anchor instead of at the detection box.
         self.face_model = face_model
@@ -325,6 +326,13 @@ class SlotEngine:
                 if s.absent_since is None and s.disturb < self.hot and not s.episode:
                     s.face_quiet += 1
                     s.face_quiet_other += int(cls == 3)
+                # Cheese is what finishes a patty, and on pale chicken it does not
+                # move b* enough for the colour rule that works on beef — both
+                # surviving false verdicts on the long shift were a dressed patty
+                # being worked or lifted. Where the model is trusted, let it say so.
+                if self._trust_face(s) and not s.cheesed:
+                    if self._dominant(s.face_hist, now - self.cheese_window, now) == 2:
+                        s.cheesed = True
 
     @staticmethod
     def _ring(lab, s, dets, fw, fh):

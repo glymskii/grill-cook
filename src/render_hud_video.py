@@ -19,6 +19,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "app"))
+sys.path.insert(0, str(ROOT / "src"))
 import timers                                          # noqa: E402
 from pipeline import in_poly                           # noqa: E402
 
@@ -48,13 +49,21 @@ def main():
     ap.add_argument("--targets", default="42,35,12,12")
     ap.add_argument("--roi", default="0.215,0.70;0.415,0.085;0.885,0.165;0.695,0.92")
     ap.add_argument("--cook", default="US Partner")
+    ap.add_argument("--engine", default="slots", choices=["slots", "production"])
     args = ap.parse_args()
 
     ta, tb, te, tl = (float(v) for v in args.targets.split(","))
     roi = [[float(v) for v in p.split(",")] for p in args.roi.split(";")]
     rows = json.loads(Path(args.dets).read_text())
-    timers.EVENTS = Path(tempfile.mkdtemp()) / "e.jsonl"
-    eng = timers.TimerEngine({"A": ta, "B": tb, "tol_early": te, "tol_late": tl})
+    targets = {"A": ta, "B": tb, "tol_early": te, "tol_late": tl}
+    if args.engine == "slots":
+        import slots
+        from face_reader import FaceReader
+        slots.EVENTS = Path(tempfile.mkdtemp()) / "e.jsonl"
+        eng = slots.SlotEngine(targets, face_model=FaceReader())
+    else:
+        timers.EVENTS = Path(tempfile.mkdtemp()) / "e.jsonl"
+        eng = timers.TimerEngine(targets)
     toasts = []          # (until_ts, text, colour)
     eng.on_event = lambda ev: toasts.append((
         ev["ts_video"] + 2.6,
@@ -79,9 +88,23 @@ def main():
     snap = {"patties": [], "session": {"streak": 0, "optimal": 0, "flips": 0}, "done": 0}
     # Warm the engine on everything before the window, silently: a clip that
     # starts mid-shift must open with the grill already loaded, not with the
-    # timers being born on screen.
+    # timers being born on screen. The slot engine needs the pictures for that,
+    # not just the boxes — its anchors, its episodes and the face all live in
+    # pixels — so the warm-up decodes too.
+    src_i = 0
     while ri < len(rows) and rows[ri]["t"] <= args.start:
-        eng.update([tuple(d) for d in rows[ri]["dets"]], rows[ri]["t"])
+        warm = None
+        if args.engine == "slots":
+            want = int(rows[ri]["t"] * src_fps)
+            while src_i < want:
+                cap.grab()
+                src_i += 1
+            ok, warm = cap.read()
+            src_i += 1
+            if not ok:
+                warm = None
+        eng.update([tuple(d) for d in rows[ri]["dets"]], rows[ri]["t"],
+                   *([warm] if args.engine == "slots" else []))
         ri += 1
     toasts.clear()
     # Sequential decode: one seek, then grab-and-drop. Seeking per frame in a
@@ -99,12 +122,8 @@ def main():
         if not ok:
             break
         while ri < len(rows) and rows[ri]["t"] <= t:
-            for d in rows[ri]["dets"]:
-                pass
-            eng._video_now = rows[ri]["t"]
-            # stamp video time on events for toast timing
-            orig_emit = eng._emit_raw
-            eng.update([tuple(d) for d in rows[ri]["dets"]], rows[ri]["t"])
+            eng.update([tuple(d) for d in rows[ri]["dets"]], rows[ri]["t"],
+                       *([frame] if args.engine == "slots" else []))
             ri += 1
         snap = eng.snapshot(t)
 
