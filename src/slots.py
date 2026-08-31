@@ -50,6 +50,7 @@ class Slot:
     absent_since: float | None = None
     face_hist: list = field(default_factory=list)  # (t, class)
     lab_hist: list = field(default_factory=list)   # (t, lab)
+    ring_hist: list = field(default_factory=list)  # (t, lab of the griddle around it)
     face: int | None = None
     cheesed: bool = False
     episode: dict | None = None    # open manipulation, or one awaiting its verdict
@@ -57,6 +58,9 @@ class Slot:
     bonus: float = 0.0
     flip_feedback: str | None = None
     last_flip_ts: float = 0.0
+    prev_crop: object = None       # last frame's pixels at this place
+    disturb: float = 0.0           # how much they just changed
+    quiet_ts: float = 0.0          # last moment nothing was happening here
 
     def elapsed(self, now: float) -> float:
         ref = self.absent_since if self.absent_since is not None else now
@@ -69,7 +73,8 @@ class SlotEngine:
                  removed_after=6.0, verdict_delay=2.5, face_window=2.5,
                  face_agree=0.6, flip_dl=18.0, flip_cooldown=45.0,
                  min_side_before_flip=25.0, reanchor_tol=0.35, migrate_frac=3.0,
-                 migrate_window=4.0, other_grace=2.0, episode_min=0.6):
+                 migrate_window=4.0, other_grace=2.0, episode_min=0.6,
+                 hot=0.35, topping_db=15.0, room_max=25.0):
         self.targets = targets
         self.claim_frac = claim_frac       # how far from its anchor a patty may be found
         self.settle_time = settle_time     # rest needed before the anchor is frozen
@@ -91,12 +96,14 @@ class SlotEngine:
         self.migrate_window = migrate_window
         self.other_grace = other_grace
         self.episode_min = episode_min
+        self.hot = hot                     # crop change that counts as a hand
+        self.topping_db = topping_db       # yellow jump that means cheese, not a turn
+        self.room_max = room_max           # light moved this much: do not judge
         self.slots: dict[int, Slot] = {}
         self.next_sid = 1
         self.done: list[dict] = []
         self.session = {"flips": 0, "optimal": 0, "early": 0, "late": 0, "streak": 0}
         self.on_event = None
-        self.lum_hist: list[tuple[float, float]] = []
         self._now = 0.0
         self.freeze_until = 0.0
         self.scene_cut_ts = 0.0
@@ -148,16 +155,6 @@ class SlotEngine:
             return None
         return tuple(st.mean(v[i] for v in labs) for i in range(3))
 
-    def _room_shift(self, t0: float, t1: float, t2: float, t3: float) -> float:
-        """How much the whole griddle changed brightness between two windows.
-
-        The camera rides its own auto-exposure: when the cook leans in, every
-        patty darkens at once. Only a change beyond the room's own is the meat.
-        """
-        a = [l for t, l in self.lum_hist if t0 <= t <= t1]
-        b = [l for t, l in self.lum_hist if t2 <= t <= t3]
-        return st.median(b) - st.median(a) if a and b else 0.0
-
     # ---- the flip decision ---------------------------------------------------
     def _verdict(self, s: Slot, now: float):
         """An episode is over and the crop has been quiet: what happened here?
@@ -177,18 +174,32 @@ class SlotEngine:
         after_lab = self._mean_lab(s.lab_hist, now - self.face_window, now)
         if after_face == 3 or before_face == 3:
             return bump("no/other-crop")            # the crop lost the patty
-        if after_face == 2:
-            s.cheesed = True                        # dressed, not turned
-            return bump("no/cheese")
+        # Colour first, the classifier second. On the smash session the face
+        # classifier calls pale raw mince "cheese" for 42% of detections — it was
+        # trained on the other kitchen — and that veto silently swallowed the
+        # whole batch flip. The colour of the pinned crop has no such opinion:
+        # cheese moves b* by 29-41 points, a turn by under 6.
         via = None
-        if before_face is not None and after_face is not None and after_face != before_face:
-            via = "face"
-        elif before_lab and after_lab:
-            # both sides seared look the same to the classifier; the crust still
-            # differs in lightness, measured against the room's own swing
-            room = self._room_shift(ep["t0"] - self.face_window, ep["t0"], now - self.face_window, now)
-            if (before_lab[0] - after_lab[0]) - room >= self.flip_dl:
+        if before_lab and after_lab:
+            # The griddle ring is a good witness and a bad accountant. Subtracting
+            # it corrected nothing and swung the answer by up to 25 Lab points in
+            # both directions — killing a real flip on one slot and inventing one
+            # on another. Used as a veto it is solid: when the light at this place
+            # really moved, refuse to judge instead of pretending to compensate.
+            ring_b = self._mean_lab(s.ring_hist, ep["t0"] - 6.0, ep["t0"] + 0.01)
+            ring_a = self._mean_lab(s.ring_hist, now - self.face_window, now)
+            if ring_b and ring_a and abs(ring_b[0] - ring_a[0]) > self.room_max:
+                return bump("no/light-moved")
+            db = before_lab[2] - after_lab[2]
+            dL = before_lab[0] - after_lab[0]
+            if db <= -self.topping_db:
+                s.cheesed = True                    # a slice landed, not a turn
+                return bump("no/cheese")
+            if dL >= self.flip_dl:
                 via = "crust"
+        if via is None and before_face is not None and after_face is not None \
+                and after_face != before_face and 2 not in (before_face, after_face):
+            via = "face"
         if via is None:
             if before_face is None:
                 return bump("no/before-unknown")
@@ -198,9 +209,14 @@ class SlotEngine:
         if s.cheesed:
             return bump("no/already-cheesed")
         elapsed = s.side_time[s.side] + (ep["t0"] - s.side_started)
-        if elapsed < self.min_side:
+        # Both guards scale with the standard rather than sitting at a constant:
+        # 45 s of cooldown was tuned on 150-270 s sides and silently forbade
+        # every flip on the smash session, where a side lasts 35-42 s.
+        shortest = min(self.targets["A"], self.targets["B"])
+        if elapsed < min(self.min_side, 0.5 * shortest):
             return bump("no/too-soon")
-        if ep["t0"] - max(s.last_flip_ts, s.placed_ts) < self.flip_cooldown:
+        if ep["t0"] - max(s.last_flip_ts, s.placed_ts) < min(self.flip_cooldown,
+                                                             0.6 * shortest):
             return bump("no/cooldown")
         bump(f"flip/{via}")
         grade = self._grade(s.side, elapsed)
@@ -220,14 +236,78 @@ class SlotEngine:
                                "bonus": s.bonus, "via": via,
                                "gap": round(ep.get("gap", 0.0), 1)})
 
+    # ---- the pinned crop -----------------------------------------------------
+    def _sense(self, frame, now: float, dets):
+        """Watch each anchored place directly, in pixels.
+
+        Absence cannot be the only trigger: a smash patty is turned where it lies
+        and the detector often never loses it, so the whole batch flip at 57-71 s
+        produced no episode at all. The crop does not miss it — a hand or a
+        spatula over a fixed place is a large, unmistakable change against a very
+        quiet baseline (measured: p50 0.02-0.045 against peaks of 0.4-4.9).
+        """
+        import cv2                                   # only needed with a frame
+        import numpy as np
+        fh, fw = frame.shape[:2]
+        lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+        # The ring is a median over an annulus; at 1080p that is a quarter of a
+        # million pixels per slot per frame and the whole pass grinds to a halt.
+        # A 640-wide copy answers the same question for 1/9th of the work, and
+        # the edge worker has to hold 25 fps with this in the loop.
+        sm = cv2.resize(lab, (640, max(1, int(640 * fh / fw))))
+        for s in self.slots.values():
+            if not s.anchored:
+                continue
+            R = max(6, int(s.ar * fw))
+            cx, cy = int(s.ax * fw), int(s.ay * fh)
+            c = frame[max(0, cy - R):cy + R, max(0, cx - R):cx + R]
+            if c.size == 0:
+                continue
+            c = cv2.resize(c, (64, 64)).astype(np.float32)
+            if s.prev_crop is not None:
+                s.disturb = float(np.abs(c - s.prev_crop).mean() /
+                                  max(s.prev_crop.mean(), 1.0))
+            s.prev_crop = c
+            r6 = max(4, int(s.ar * fw * 0.6))
+            p = lab[max(0, cy - r6):cy + r6, max(0, cx - r6):cx + r6]
+            if p.size:
+                m = p.reshape(-1, 3).mean(axis=0)
+                s.lab_hist.append((now, (float(m[0]), float(m[1]), float(m[2]))))
+                s.lab_hist = [x for x in s.lab_hist if x[0] >= now - 12]
+            ring = self._ring(sm, s, dets, sm.shape[1], sm.shape[0])
+            if ring is not None:
+                s.ring_hist.append((now, ring))
+                s.ring_hist = [x for x in s.ring_hist if x[0] >= now - 12]
+
+    @staticmethod
+    def _ring(lab, s, dets, fw, fh):
+        """Bare griddle immediately around the slot, cleared of everything the
+        detector can see. This is the honest exposure reference: it does not
+        change when the patty is turned, so subtracting it removes the camera's
+        auto-exposure swing without removing the flip along with it."""
+        import numpy as np
+        R = s.ar * fw
+        cx, cy = s.ax * fw, s.ay * fh
+        x0, x1 = int(max(0, cx - 2.1 * R)), int(min(fw, cx + 2.1 * R))
+        y0, y1 = int(max(0, cy - 2.1 * R)), int(min(fh, cy + 2.1 * R))
+        win = lab[y0:y1, x0:x1]
+        if win.size == 0:
+            return None
+        yy, xx = np.ogrid[y0:y1, x0:x1]
+        d = np.hypot(xx - cx, yy - cy)
+        mask = (d >= 1.15 * R) & (d <= 1.9 * R)
+        for dx, dy, dr in dets:
+            mask &= np.hypot(xx - dx * fw, yy - dy * fh) > 1.05 * dr * fw
+        px = win[mask]
+        if len(px) < 40:
+            return None
+        m = np.median(px, axis=0)
+        return (float(m[0]), float(m[1]), float(m[2]))
+
     # ---- per-frame update ----------------------------------------------------
-    def update(self, dets, now: float):
+    def update(self, dets, now: float, frame=None):
         self._now = now
         dets = [self._norm(d) for d in dets]
-        lums = sorted(d[4][0] for d in dets if d[4])
-        if lums:
-            self.lum_hist.append((now, lums[len(lums) // 2]))
-            self.lum_hist = [x for x in self.lum_hist if x[0] >= now - 60]
 
         # --- claims: every slot asks whether its patty is still in its place ---
         pairs = []
@@ -251,41 +331,53 @@ class SlotEngine:
                 continue
             d = dets[i]
             s.face_hist.append((now, d[5]))
-            s.lab_hist.append((now, d[4]))
+            if frame is None:                      # no pixels: fall back to the box
+                s.lab_hist.append((now, d[4]))
+                s.lab_hist = [x for x in s.lab_hist if x[0] >= now - 12]
             s.face_hist = [x for x in s.face_hist if x[0] >= now - 12]
-            s.lab_hist = [x for x in s.lab_hist if x[0] >= now - 12]
             s.offsets.append((now, d[0] - s.ax, d[1] - s.ay))
             s.offsets = [x for x in s.offsets if x[0] >= now - 6]
             face = self._dominant(s.face_hist, now - self.face_window, now)
             if face is not None:
                 s.face = face
-                if face == 2:
-                    s.cheesed = True
+                if face == 2 and frame is None:
+                    s.cheesed = True       # with pixels, colour decides this
             if not s.anchored:
                 s.births.append((now, d[0], d[1], d[2]))
                 self._settle(s, now)
-            if s.absent_since is not None:
-                gap = now - s.absent_since
-                s.absent_since = None
-                if gap >= self.episode_min and s.episode is None:
-                    self.stats["episodes"] = self.stats.get("episodes", 0) + 1
-                    # the patty was out of its place: open an episode and judge it
-                    # once the crop has been quiet again
-                    s.episode = {"t0": s.seen_ts, "gap": gap, "due": now + self.verdict_delay,
-                                 "face_before": self._dominant(s.face_hist, s.seen_ts - 6.0,
-                                                               s.seen_ts + 0.01),
-                                 "lab_before": self._mean_lab(s.lab_hist, s.seen_ts - 6.0,
-                                                              s.seen_ts + 0.01)}
-                elif s.episode is not None:
-                    s.episode["due"] = now + self.verdict_delay   # still being handled
-                    s.episode["gap"] = max(s.episode["gap"], gap)
+            s.absent_since = None
             s.seen_ts = now
             self._reanchor(s, now)
+
+        if frame is not None:
+            self._sense(frame, now, [(d[0], d[1], d[2]) for d in dets])
+
+        # --- episodes: someone is working this place --------------------------
+        for s in self.slots.values():
+            if not s.anchored:
+                continue
+            busy = s.absent_since is not None or s.disturb >= self.hot
+            if busy:
+                if s.episode is None:
+                    self.stats["episodes"] = self.stats.get("episodes", 0) + 1
+                    s.episode = {"t0": s.quiet_ts or s.seen_ts, "gap": 0.0,
+                                 "face_before": self._dominant(s.face_hist,
+                                                               (s.quiet_ts or now) - 6.0,
+                                                               (s.quiet_ts or now) + 0.01),
+                                 "lab_before": self._mean_lab(s.lab_hist,
+                                                              (s.quiet_ts or now) - 6.0,
+                                                              (s.quiet_ts or now) + 0.01)}
+                if s.absent_since is not None:
+                    s.episode["gap"] = max(s.episode["gap"], now - s.absent_since)
+                s.episode["due"] = now + self.verdict_delay
+            else:
+                s.quiet_ts = s.quiet_ts if s.episode else now
 
         # --- verdicts that have come due --------------------------------------
         for s in list(self.slots.values()):
             if s.episode and s.absent_since is None and now >= s.episode["due"]:
                 self._verdict(s, now)
+                s.quiet_ts = now
 
         # --- detections nobody claimed: a new patty, or one that was moved -----
         for i, d in enumerate(dets):

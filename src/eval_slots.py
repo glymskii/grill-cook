@@ -16,6 +16,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import cv2
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "app"))
 sys.path.insert(0, str(ROOT / "src"))
@@ -85,8 +87,13 @@ def score_flips(flips, gt):
             "recall": f"{tp}/{len(real)}", "f1": round(f1, 3), "unjudged": unjudged}
 
 
-def replay(engine, rows, targets):
-    """Run a dump through an engine, collecting what the cook would have seen."""
+def replay(engine, rows, targets, video=None):
+    """Run a dump through an engine, collecting what the cook would have seen.
+
+    The slot engine is given frames because in production it has them: the same
+    worker that runs the detector holds the picture. The production engine is
+    run exactly as it ships, on detections alone.
+    """
     ev = []
 
     def record(e):
@@ -102,14 +109,28 @@ def replay(engine, rows, targets):
 
     engine.on_event = record
     paths, rings, dets_n = {}, [], []
+    cap = cv2.VideoCapture(video) if video else None
+    src_fps, src_i = (cap.get(cv2.CAP_PROP_FPS) if cap else 0), 0
     for r in rows:
-        engine.update([tuple(d) for d in r["dets"]], r["t"])
+        frame = None
+        if cap:
+            want = int(r["t"] * src_fps)
+            while src_i < want:
+                cap.grab()
+                src_i += 1
+            ok, frame = cap.read()
+            src_i += 1
+            if not ok:
+                frame = None
+        engine.update([tuple(d) for d in r["dets"]], r["t"], *([frame] if cap else []))
         snap = engine.snapshot(r["t"])
         vis = [p for p in snap["patties"] if p.get("missing_for", 0) <= 0.4]
         rings.append(len(vis))
         dets_n.append(len(r["dets"]))
         for p in vis:
             paths.setdefault(p["pid"], []).append((r["t"], p["x"], p["y"], p["r"]))
+    if cap:
+        cap.release()
     return ev, paths, rings, dets_n
 
 
@@ -128,14 +149,15 @@ def churn(paths):
     return per_min, jumps
 
 
-def run(name, dump, targets, gt=None):
+def run(name, dump, targets, gt=None, video=None):
     rows = json.loads((ROOT / dump).read_text())
     out = {}
     for label, eng in (("production", timers.TimerEngine(targets)),
                        ("slots", slots.SlotEngine(targets))):
         mod = timers if label == "production" else slots
         mod.EVENTS = Path(tempfile.mkdtemp()) / "e.jsonl"
-        ev, paths, rings, dets_n = replay(eng, rows, targets)
+        ev, paths, rings, dets_n = replay(
+            eng, rows, targets, str(ROOT / video) if video and label == "slots" else None)
         flips = [(e["ts_video"], e.get("x"), e.get("y")) for e in ev if e["type"] == "flip"]
         walk, jumps = churn(paths)
         out[label] = {
@@ -173,6 +195,8 @@ if __name__ == "__main__":
     gt = load_gt()
     run("long shift 16.8 min (manual flip ground truth)",
         "data/mot_dets_full_faces.json",
-        {"A": 270, "B": 150, "tol_early": 15, "tol_late": 20}, gt)
+        {"A": 270, "B": 150, "tol_early": 15, "tol_late": 20}, gt,
+        video="data/IMG_6635.mov")
     run("smash 2.8 min", "data/mot_dets_smash_faces.json",
-        {"A": 42, "B": 35, "tol_early": 12, "tol_late": 12})
+        {"A": 42, "B": 35, "tol_early": 12, "tol_late": 12},
+        video="data/IMG_6637.mov")
