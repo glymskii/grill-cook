@@ -54,8 +54,10 @@ def main():
         X.append(feats[i]); y.append(CLASSES.index(cls))
         t.append(int(ts) / 10.0); src.append(tag)
     X, y, t, src = np.array(X), np.array(y), np.array(t), np.array(src)
-    print(f"размечено {len(y)} кропов из {len(names)} "
-          f"(выброшено смешанных {len(names) - len(y)})")
+    kept_faces = len(y) - len(onames)
+    print(f"размечено {len(y)} кропов: {kept_faces} лиц из {len(names)} "
+          f"(смешанных кластеров выброшено {len(names) - kept_faces}) "
+          f"+ {len(onames)} негативов")
     for i, c in enumerate(CLASSES):
         print(f"  {c}: {(y == i).sum()}")
 

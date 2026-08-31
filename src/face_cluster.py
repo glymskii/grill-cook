@@ -4,7 +4,8 @@ Hand-labeling thousands of crops is not on; judging a montage of a cluster is.
 Frozen ImageNet features separate raw meat, seared crust and cheese well enough
 that a cluster is nearly pure, so one verdict labels hundreds of crops.
 
-Usage: python src/face_cluster.py            # embed + cluster + montages
+Usage: python src/face_cluster.py                       # patty faces, K=10
+       python src/face_cluster.py data/neg_candidates 12
 """
 import json
 import sys
@@ -18,9 +19,12 @@ from sklearn.cluster import KMeans
 from torchvision import models, transforms
 
 ROOT = Path(__file__).resolve().parent.parent
-FACES = ROOT / "data/faces"
-OUT = ROOT / "out/face_clusters"
-K = 10
+# Defaults cluster the patty faces; pointed at another folder (the mined
+# negatives, say) the same machinery labels those the same cheap way.
+FACES = ROOT / Path(sys.argv[1] if len(sys.argv) > 1 else "data/faces")
+OUT = ROOT / "out" / (FACES.name + "_clusters")
+K = int(sys.argv[2]) if len(sys.argv) > 2 else 10
+STEM = "face" if FACES.name == "faces" else FACES.name
 
 tf = transforms.Compose([
     transforms.Resize((112, 112)),
@@ -48,12 +52,12 @@ def main():
     print(f"кропов: {len(paths)}")
     dev = "mps" if torch.backends.mps.is_available() else "cpu"
     feats = embed(paths, dev)
-    np.save(ROOT / "data/face_feats.npy", feats)
-    (ROOT / "data/face_paths.json").write_text(json.dumps([p.name for p in paths]))
+    np.save(ROOT / f"data/{STEM}_feats.npy", feats)
+    (ROOT / f"data/{STEM}_paths.json").write_text(json.dumps([p.name for p in paths]))
 
     km = KMeans(n_clusters=K, n_init=10, random_state=0).fit(feats)
     labels = km.labels_
-    (ROOT / "data/face_clusters.json").write_text(
+    (ROOT / f"data/{STEM}_clusters.json").write_text(
         json.dumps({p.name: int(l) for p, l in zip(paths, labels)}))
     OUT.mkdir(parents=True, exist_ok=True)
     for c in range(K):
