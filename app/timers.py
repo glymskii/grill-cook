@@ -107,7 +107,7 @@ class LivePatty:
 class TimerEngine:
     def __init__(self, targets: dict, flip_gap_min=1.2, removed_after=6.0,
                  flip_cooldown=45.0, min_side_before_flip=25.0, assoc_frac=1.6,
-                 birth_conf=0.55, gate_base=1.45, gate_max=1.8, size_gate=1.55,
+                 birth_conf=0.40, gate_base=1.45, gate_max=1.8, size_gate=1.55,
                  colour_scale=26.0, revive_window=60.0, revive_colour=22.0,
                  overlap_frac=0.55, use_kf="motion", birth_suppress=1.2,
                  kf_min_age=20.0, colour_win=2.5, flip_dl=22.0, topping_db=12.0,
@@ -120,10 +120,11 @@ class TimerEngine:
         self.flip_cooldown = flip_cooldown
         self.min_side = min_side_before_flip
         self.assoc_frac = assoc_frac
-        # Hysteresis: a patty being put on the griddle is unmistakable, so a new
-        # track has to clear a high bar; an established one survives on far less.
-        # The 0.3 blobs that used to qualify were griddle marks in the dark half
-        # of the frame, and each one drew a ring the cook could not explain.
+        # Hysteresis: a new track has to clear a bar, an established one survives
+        # on far less. The bar was raised to 0.55 to hide the detector's 0.2
+        # grease blobs; v7 no longer produces them, so it comes back down —
+        # a cheese-covered patty can read 0.5, and missing a real patty is a
+        # worse failure than a ring that lives for a moment.
         self.birth_conf = birth_conf
         # identity gates. Patties sit edge to edge, so a centre may be barely
         # more than one radius away from the WRONG patty: the gate has to stay

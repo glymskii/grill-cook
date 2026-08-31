@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
-BEST = ROOT / "runs/detect/runs/detect/patty_v6/weights/best.pt"
+BEST = ROOT / "runs/detect/runs/detect/patty_v7/weights/best.pt"
 
 
 def lab_of(frame, x1, y1, x2, y2):

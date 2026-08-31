@@ -27,7 +27,7 @@ FPS = 5.0
 
 cfg = Config()
 from ultralytics import YOLO
-model = YOLO("runs/detect/runs/detect/patty_v6/weights/best.pt")
+model = YOLO("runs/detect/runs/detect/patty_v7/weights/best.pt")
 
 cap = cv2.VideoCapture(os.environ.get("SRC", "data/IMG_6635.mov"))
 src_fps = cap.get(cv2.CAP_PROP_FPS)
