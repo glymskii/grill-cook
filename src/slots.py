@@ -51,6 +51,7 @@ class Slot:
     face_hist: list = field(default_factory=list)  # (t, class)
     lab_hist: list = field(default_factory=list)   # (t, lab)
     ring_hist: list = field(default_factory=list)  # (t, lab of the griddle around it)
+    claim_hist: list = field(default_factory=list)  # (t, was the patty found here)
     face: int | None = None
     cheesed: bool = False
     episode: dict | None = None    # open manipulation, or one awaiting its verdict
@@ -74,7 +75,7 @@ class SlotEngine:
                  face_agree=0.6, flip_dl=18.0, flip_cooldown=45.0,
                  min_side_before_flip=25.0, reanchor_tol=0.35, migrate_frac=3.0,
                  migrate_window=4.0, other_grace=2.0, episode_min=0.6,
-                 hot=0.35, topping_db=15.0, room_max=25.0):
+                 hot=0.35, topping_db=15.0, room_max=25.0, hold_frac=0.8):
         self.targets = targets
         self.claim_frac = claim_frac       # how far from its anchor a patty may be found
         self.settle_time = settle_time     # rest needed before the anchor is frozen
@@ -99,6 +100,7 @@ class SlotEngine:
         self.hot = hot                     # crop change that counts as a hand
         self.topping_db = topping_db       # yellow jump that means cheese, not a turn
         self.room_max = room_max           # light moved this much: do not judge
+        self.hold_frac = hold_frac         # the patty must hold its place to be judged
         self.slots: dict[int, Slot] = {}
         self.next_sid = 1
         self.done: list[dict] = []
@@ -174,6 +176,14 @@ class SlotEngine:
         after_lab = self._mean_lab(s.lab_hist, now - self.face_window, now)
         if after_face == 3 or before_face == 3:
             return bump("no/other-crop")            # the crop lost the patty
+        # The colour of the crop only means something if the crop is the patty.
+        # Reviewed by eye, the false verdicts that survived everything else were
+        # all the same mistake: at the moment of judging, the place was under a
+        # forearm or a sausage. One frame of presence is not enough — the patty
+        # has to be back and stay back for the whole window we measure.
+        held = [c for t, c in s.claim_hist if t >= now - self.face_window]
+        if held and sum(held) / len(held) < self.hold_frac:
+            return bump("no/not-back-yet")
         # Colour first, the classifier second. On the smash session the face
         # classifier calls pale raw mince "cheese" for 42% of detections — it was
         # trained on the other kitchen — and that veto silently swallowed the
@@ -325,6 +335,8 @@ class SlotEngine:
 
         for s in self.slots.values():
             i = claimed.get(s.sid)
+            s.claim_hist.append((now, i is not None))
+            s.claim_hist = [x for x in s.claim_hist if x[0] >= now - 12]
             if i is None:
                 if s.absent_since is None:
                     s.absent_since = now
