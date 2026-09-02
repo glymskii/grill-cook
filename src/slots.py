@@ -86,7 +86,7 @@ class SlotEngine:
                  history_step=0.5, shadow_time=10.0, show_after=4.0,
                  before_window=3.0, strong_dl=30.0, cheese_jump=20.0,
                  cheese_min_age=20.0, undress_after=10.0, cheese_confirm=8.0,
-                 face_model=None):
+                 same_face_dl=26.0, face_model=None):
         self.targets = targets
         self.claim_frac = claim_frac       # how far from its anchor a patty may be found
         self.settle_time = settle_time     # rest needed before the anchor is frozen
@@ -124,6 +124,7 @@ class SlotEngine:
         self.cheese_min_age = cheese_min_age   # nobody dresses a patty this young
         self.undress_after = undress_after     # the place looked pre-cheese this long: flag off
         self.cheese_confirm = cheese_confirm   # seconds the light must hold before a slice is believed
+        self.same_face_dl = same_face_dl       # below this, an unchanged face outranks the colour
         # optional callable: list of BGR crops -> list of class ids. Given one,
         # the face is read at the anchor instead of at the detection box.
         self.face_model = face_model
@@ -329,7 +330,26 @@ class SlotEngine:
             if s.cheesed and dL >= self.cheese_jump:
                 self._swap(s, now)
                 return bump("no/swap")
+            trusted = self._trust_face(s)
+            # Two more ways a place changes hands, both physical and both read
+            # as flips before: the classifier saw cheese here at rest and now
+            # sees none while the place went dark (the dressed patty left); or
+            # the face went cooked -> raw (cooking is monotonic, a raw face
+            # after a cooked one is a different patty).
+            if trusted and dL >= self.cheese_jump and before_face == 2 and after_face not in (2, None):
+                self._swap(s, now)
+                return bump("no/swap")
+            if trusted and before_face == 1 and after_face == 0 and dL >= self.flip_dl:
+                self._swap(s, now)
+                return bump("no/swap")
             if dL >= self.flip_dl:
+                # A hand's shadow darkens a crop by 19-25 L without turning
+                # anything. Where the classifier is trusted and saw the same
+                # face before and after, a step that small is not a flip: every
+                # real one here either moved 30 L or changed the face.
+                if trusted and before_face is not None and before_face == after_face \
+                        and dL < self.same_face_dl:
+                    return bump("no/same-face-small-step")
                 via = "crust"
         # The classifier is a witness, not a judge: "not a patty" at the anchor
         # refuses a verdict only when the colour said nothing. It refused a +62

@@ -50,20 +50,28 @@ def dedup_dets(dets):
     return kept
 
 
-def size_gate(dets, radii, lo=0.58, hi=1.7, warmup=12):
+def size_gate(dets, radii, lo=0.58, hi=3.0, warmup=12):
     """Patties on one griddle are the same size — outliers are not patties.
 
-    The reference is a running median of confidently detected radii, so it
-    adapts to the camera's framing instead of assuming pixel sizes. Until the
-    median has `warmup` samples everything passes: a cold start must not
-    swallow the first real patties.
+    The reference is a running percentile of confidently detected radii, so it
+    adapts to the camera's framing instead of assuming pixel sizes. Until it
+    has `warmup` samples everything passes: a cold start must not swallow the
+    first real patties.
+
+    Measured on the smash session: the balls of mince that open a shift seeded
+    a median of 0.0285, and the patties pressed out of them (0.057-0.081) sat
+    at 2-2.8x the reference - the raw detector saw them in 83% of frames and
+    this gate let 3% through, which is where the 8-16 s without a ring came
+    from. The reference now leans to the larger half (60th percentile) and the
+    band is open upwards: what the gate exists to reject is the small stuff -
+    grease, crumbs - and the frame-sized things max_size_frac already stops.
     """
     for d in dets:
         if d[3] >= 0.6:
             radii.append(d[2])
     if len(radii) < warmup:
         return dets, 0
-    ref = sorted(radii)[len(radii) // 2]
+    ref = sorted(radii)[int(0.6 * len(radii))]
     kept = [d for d in dets if lo * ref <= d[2] <= hi * ref]
     return kept, len(dets) - len(kept)
 
