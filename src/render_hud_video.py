@@ -52,10 +52,22 @@ def main():
     ap.add_argument("--engine", default="slots", choices=["slots", "production"])
     args = ap.parse_args()
 
-    ta, tb, te, tl = (float(v) for v in args.targets.split(","))
     roi = [[float(v) for v in p.split(",")] for p in args.roi.split(";")]
     rows = json.loads(Path(args.dets).read_text())
-    targets = {"A": ta, "B": tb, "tol_early": te, "tol_late": tl}
+    if ":" in args.targets:
+        # per-SKU standards: "pale:320,195,45,65;dark:135,175,20,25" - a patty picks
+        # its own by the colour it rests at; the first pair is the station default
+        skus = {}
+        for part in args.targets.split(";"):
+            name, vals = part.split(":")
+            a, b, e, l = (float(v) for v in vals.split(","))
+            skus[name] = {"A": a, "B": b, "tol_early": e, "tol_late": l}
+        first = next(iter(skus.values()))
+        targets = dict(first, skus=dict(skus, a_below=132))
+        ta, tb, te, tl = first["A"], first["B"], first["tol_early"], first["tol_late"]
+    else:
+        ta, tb, te, tl = (float(v) for v in args.targets.split(","))
+        targets = {"A": ta, "B": tb, "tol_early": te, "tol_late": tl}
     if args.engine == "slots":
         import slots
         from face_reader import FaceReader
@@ -141,6 +153,7 @@ def main():
             x, y = int(p["x"] * fw), int(p["y"] * fh)
             r = max(int(p["r"] * fw * 0.95), 46)
             remain = p["deadline"] - t
+            tl_p = p.get("tol_late", tl)
             ring, over = BLUE, False
             if p.get("cheesed"):
                 # cheese means finished: prompting a flip here is the one thing
@@ -155,7 +168,7 @@ def main():
                 # a slot still proving itself: a thin quiet ring, no countdown
                 cv2.circle(frame, (x, y), r, (150, 140, 130), 2, cv2.LINE_AA)
                 continue
-            if remain <= -tl:
+            if remain <= -tl_p:
                 ring, over, any_over = RED, True, True
             elif remain <= 10:
                 ring = AMBER
@@ -233,7 +246,7 @@ def main():
             if yy > fh - 34:
                 break
             shown += 1
-            hot = RED if p["deadline"] - t <= -tl and not p.get("cheesed") else None
+            hot = RED if p["deadline"] - t <= -p.get("tol_late", tl) and not p.get("cheesed") else None
             tone = (235, 200, 60) if p.get("cheesed") else (hot or WHITE)
             put(frame, f"{p.get('no', p['pid'])}", (col[0], yy), 0.7, tone, 2, centre=False)
             put(frame, mmss(p.get("total", 0)), (col[1], yy), 0.66, WHITE, 2, centre=False)

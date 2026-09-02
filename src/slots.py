@@ -68,6 +68,7 @@ class Slot:
     last_xy: tuple | None = None   # where the patty was last actually seen
     pre_cheese_lab: tuple | None = None   # the crop before the slice landed
     cheese_pending: tuple | None = None   # (t0, opened, before): a jump awaiting confirmation
+    sku: str | None = None                # which standard applies, once the patty has shown its colour
 
     def elapsed(self, now: float) -> float:
         ref = self.absent_since if self.absent_since is not None else now
@@ -162,8 +163,26 @@ class SlotEngine:
         if self.on_event:
             self.on_event(ev)
 
-    def _grade(self, side: str, elapsed: float) -> str:
-        t = self.targets
+    def targets_for(self, s: Slot) -> dict:
+        """The standard for THIS patty. A station cooks more than one product;
+        with `skus` in the targets a patty is assigned by the colour it rests at
+        (pale chicken vs pink beef, a* below/above `a_below`) once it has shown
+        it for 20 quiet seconds. Until then, and without skus, the station-wide
+        targets apply."""
+        skus = self.targets.get("skus")
+        if not skus:
+            return self.targets
+        if s.sku is None:
+            # redness, not brightness: at rest beef reads a* 138-144 and chicken
+            # 123-126 on this camera with nothing in between, while their
+            # brightness ranges touch (beef up to 175, chicken from 176)
+            quiet = [l[1] for t, l in s.lab_hist if t <= s.placed_ts + 40]
+            if len(quiet) >= 20:
+                s.sku = "pale" if st.median(quiet) < skus.get("a_below", 132) else "dark"
+        return skus.get(s.sku, self.targets) if s.sku else self.targets
+
+    def _grade(self, side: str, elapsed: float, t: dict | None = None) -> str:
+        t = t or self.targets
         if elapsed < t[side] - t["tol_early"]:
             return "early"
         if elapsed > t[side] + t["tol_late"]:
@@ -372,15 +391,17 @@ class SlotEngine:
         # Both guards scale with the standard rather than sitting at a constant:
         # 45 s of cooldown was tuned on 150-270 s sides and silently forbade
         # every flip on the smash session, where a side lasts 35-42 s.
-        shortest = min(self.targets["A"], self.targets["B"])
+        tg0 = self.targets_for(s)
+        shortest = min(tg0["A"], tg0["B"])
         if elapsed < min(self.min_side, 0.5 * shortest):
             return bump("no/too-soon")
         if ep["t0"] - max(s.last_flip_ts, s.placed_ts) < min(self.flip_cooldown,
                                                              0.6 * shortest):
             return bump("no/cooldown")
         bump(f"flip/{via}")
-        grade = self._grade(s.side, elapsed)
-        s.bonus = round(self.targets[s.side] - elapsed, 1) if grade == "early" else 0.0
+        tg = self.targets_for(s)
+        grade = self._grade(s.side, elapsed, tg)
+        s.bonus = round(tg[s.side] - elapsed, 1) if grade == "early" else 0.0
         s.side_time[s.side] = elapsed
         s.side = "B" if s.side == "A" else "A"
         s.side_started = now
@@ -743,7 +764,8 @@ class SlotEngine:
         t = self.targets
         out = []
         for s in self.slots.values():
-            target = t[s.side] + s.bonus
+            tg = self.targets_for(s)
+            target = tg[s.side] + s.bonus
             elapsed = s.elapsed(now)
             fb, s.flip_feedback = s.flip_feedback, None
             nos = {sid: i + 1 for i, (_, sid) in enumerate(self.order)}
@@ -755,6 +777,7 @@ class SlotEngine:
                 "deadline": round(now - elapsed + target, 2),
                 "cheesed": s.cheesed, "face": s.face,
                 "provisional": (now - s.placed_ts) < self.show_after,
+                "sku": s.sku, "tol_late": tg["tol_late"],
                 "side_a": round(s.side_time["A"] + (elapsed - s.side_time[s.side]
                                                     if s.side == "A" else 0), 1),
                 "side_b": round(s.side_time["B"] + (elapsed - s.side_time[s.side]
