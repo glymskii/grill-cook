@@ -11,6 +11,8 @@ TAG=sys.argv[1]
 video, dets, targets, t0, t1 = {
  "smash": ("data/IMG_6637.mov","data/mot_dets_smash_faces.json",(42,35,12,12),0,170),
  "long":  ("data/IMG_6635.mov","data/mot_dets_full_faces.json",(270,150,15,20),0,1010)}[TAG]
+import os
+dets = os.environ.get("DETS", dets)          # another detector's dump, same shape
 slots.EVENTS=Path(tempfile.mkdtemp())/"e.jsonl"
 ta,tb,te,tl=targets
 eng=slots.SlotEngine({"A":ta,"B":tb,"tol_early":te,"tol_late":tl}, face_model=FaceReader())
