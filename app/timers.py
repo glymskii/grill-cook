@@ -99,6 +99,7 @@ class LivePatty:
     kf: KF | None = None
     sku: str | None = None                  # which standard applies, once the patty has shown its colour
     a_hist: list = field(default_factory=list)   # (t, raw a* of the matched box), for the SKU only
+    cheesed_ts: float = 0.0                 # when the cheese flag went up, for the log panel
 
     def elapsed(self, now: float) -> float:
         if self.missing_since is not None:
@@ -397,6 +398,7 @@ class TimerEngine:
                 p.face = stable
                 if stable == 2:
                     p.cheesed = True
+                    p.cheesed_ts = p.cheesed_ts or self._now
                 if stable == 3:
                     p.other_since = p.other_since or now
                     if now - p.other_since > self.other_grace:
@@ -428,6 +430,7 @@ class TimerEngine:
             p.handling, p.face_before, p.episode_gap = False, None, 0.0
             if after == 2:
                 p.cheesed = True
+                p.cheesed_ts = p.cheesed_ts or self._now
             if p.cheesed:
                 continue
             # Once both sides are seared they look the same, so a second flip is
@@ -716,6 +719,13 @@ class TimerEngine:
                 "missing_for": round(now - p.missing_since, 1) if p.missing_since else 0.0,
                 "feedback": fb,
                 "sku": p.sku, "tol_late": tg["tol_late"],
+                # the log panel: what this patty has spent so far, side by side
+                "side_a": round(p.side_time["A"] + (elapsed - p.side_time[p.side]
+                                                    if p.side == "A" else 0), 1),
+                "side_b": round(p.side_time["B"] + (elapsed - p.side_time[p.side]
+                                                    if p.side == "B" else 0), 1),
+                "total": round(now - p.placed_ts, 1),
+                "cheese_for": round(now - p.cheesed_ts, 1) if p.cheesed_ts else 0.0,
             })
         return {"patties": out, "session": dict(self.session), "done": len(self.done),
                 "scene_cut_ts": round(self.scene_cut_ts, 2)}
