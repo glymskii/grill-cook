@@ -45,7 +45,7 @@
    488
   ],
   "22": [
-   485
+   445
   ],
   "23": [
    485
@@ -307,6 +307,7 @@
    562
   ],
   "22": [
+   485,
    967
   ]
  },
@@ -608,5 +609,8 @@
     586
    ]
   ]
- }
+ },
+ "_corrections": [
+  "slot 22: flip 485 -> 445 (engine verdict at 448.8 led to the strip: raw at 439, brown from 447; the 485 candidate had the patty already brown on both sides -> unclear)"
+ ]
 }

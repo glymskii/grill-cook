@@ -71,5 +71,6 @@ summary={sid:{"start":round(L["start"],1),"born":round(L["first_seen"],1),"life"
 json.dump(summary, open(f"/tmp/life_{TAG}.json","w"), indent=0)
 json.dump(ev, open(str(ROOT / f"data/slot_events_{TAG}.json"),"w"))
 json.dump(summary, open(str(ROOT / f"out/v9_review/life_{TAG}_new.json"),"w"), indent=0)
+print("verdict outcomes:", dict(sorted(eng.stats.items(), key=lambda kv:-kv[1])))
 print(TAG, "slots:", len(life), "cheesed:", sum(1 for L in life.values() if L["cheesed_ts"]),
       "flips:", sum(len(v) for v in flips.values()))

@@ -76,13 +76,13 @@ class SlotEngine:
     def __init__(self, targets: dict, claim_frac=0.75, settle_time=2.0,
                  settle_tol=0.25, birth_conf=0.40, birth_suppress=1.6,
                  removed_after=6.0, verdict_delay=2.5, face_window=2.5,
-                 face_agree=0.6, flip_dl=18.0, flip_cooldown=45.0,
+                 face_agree=0.6, flip_dl=18.0, flip_cooldown=20.0,
                  min_side_before_flip=25.0, reanchor_tol=0.35, migrate_frac=3.0,
                  migrate_window=4.0, other_grace=2.0, episode_min=0.6,
                  hot=0.35, topping_db=15.0, room_max=25.0, hold_frac=0.8,
                  cheese_window=4.0, occupied_dist=40.0, max_backdate=30.0,
                  history_step=0.5, shadow_time=10.0, show_after=4.0,
-                 face_model=None):
+                 before_window=3.0, strong_dl=30.0, face_model=None):
         self.targets = targets
         self.claim_frac = claim_frac       # how far from its anchor a patty may be found
         self.settle_time = settle_time     # rest needed before the anchor is frozen
@@ -114,6 +114,8 @@ class SlotEngine:
         self.history_step = history_step
         self.shadow_time = shadow_time     # a vacated anchor keeps suppressing births
         self.show_after = show_after       # a ring is provisional until this age
+        self.before_window = before_window # quiet seconds before an episode that count as 'before'
+        self.strong_dl = strong_dl         # a colour step this big outranks the classifier
         # optional callable: list of BGR crops -> list of class ids. Given one,
         # the face is read at the anchor instead of at the detection box.
         self.face_model = face_model
@@ -124,6 +126,7 @@ class SlotEngine:
         # seconds to become a patty to the detector.
         self.order: list = []              # (placed_ts, sid), sorted
         self.shadows: list = []            # (t, x, y, r) places an anchor just left
+        self.plate_hist: list = []         # (t, median ring L over the plate)
         self.slots: dict[int, Slot] = {}
         self.next_sid = 1
         self.done: list[dict] = []
@@ -209,6 +212,10 @@ class SlotEngine:
         if first < s.placed_ts:
             s.placed_ts = s.side_started = first
 
+    def _mean_plate(self, t0: float, t1: float):
+        v = [L for t, L in self.plate_hist if t0 <= t <= t1]
+        return st.mean(v) if v else None
+
     def _trust_face(self, s: Slot) -> bool:
         """Does the face model make sense at this place at all?"""
         if s.face_quiet < 40:
@@ -232,8 +239,6 @@ class SlotEngine:
         before_face, before_lab = ep["face_before"], ep["lab_before"]
         after_face = self._dominant(s.face_hist, now - self.face_window, now)
         after_lab = self._mean_lab(s.lab_hist, now - self.face_window, now)
-        if (after_face == 3 or before_face == 3) and self._trust_face(s):
-            return bump("no/other-crop")            # the crop lost the patty
         # The colour of the crop only means something if the crop is the patty.
         # Reviewed by eye, the false verdicts that survived everything else were
         # all the same mistake: at the moment of judging, the place was under a
@@ -247,16 +252,16 @@ class SlotEngine:
         # trained on the other kitchen — and that veto silently swallowed the
         # whole batch flip. The colour of the pinned crop has no such opinion:
         # cheese moves b* by 29-41 points, a turn by under 6.
-        via = None
+        via, dL = None, None
         if before_lab and after_lab:
             # The griddle ring is a good witness and a bad accountant. Subtracting
             # it corrected nothing and swung the answer by up to 25 Lab points in
             # both directions — killing a real flip on one slot and inventing one
             # on another. Used as a veto it is solid: when the light at this place
             # really moved, refuse to judge instead of pretending to compensate.
-            ring_b = self._mean_lab(s.ring_hist, ep["t0"] - 6.0, ep["t0"] + 0.01)
-            ring_a = self._mean_lab(s.ring_hist, now - self.face_window, now)
-            if ring_b and ring_a and abs(ring_b[0] - ring_a[0]) > self.room_max:
+            plate_b = self._mean_plate(ep["t0"] - self.before_window, ep["t0"] + 0.01)
+            plate_a = self._mean_plate(now - self.face_window, now)
+            if plate_b is not None and plate_a is not None and abs(plate_b - plate_a) > self.room_max:
                 return bump("no/light-moved")
             db = before_lab[2] - after_lab[2]
             dL = before_lab[0] - after_lab[0]
@@ -266,6 +271,12 @@ class SlotEngine:
                 return bump("no/cheese")
             if dL >= self.flip_dl:
                 via = "crust"
+        # The classifier is a witness, not a judge: "not a patty" at the anchor
+        # refuses a verdict only when the colour said nothing. It refused a +62
+        # flip on 19@477 once, with a golden crust in plain view.
+        if (after_face == 3 or before_face == 3) and self._trust_face(s) \
+                and (dL is None or dL < self.strong_dl):
+            return bump("no/other-crop")            # the crop lost the patty
         if via is None and before_face is not None and after_face is not None \
                 and after_face != before_face and 2 not in (before_face, after_face):
             via = "face"
@@ -330,6 +341,7 @@ class SlotEngine:
         if not self.history or now - self.history[-1][0] >= self.history_step:
             self.history.append((now, cv2.resize(lab, (320, max(1, int(320 * fh / fw))))))
             self.history = [h for h in self.history if now - h[0] <= self.max_backdate]
+        plate_rings = []
         for s in self.slots.values():
             if not s.anchored:
                 continue
@@ -347,17 +359,24 @@ class SlotEngine:
             p = lab[max(0, cy - r6):cy + r6, max(0, cx - r6):cx + r6]
             if p.size:
                 m = p.reshape(-1, 3).mean(axis=0)
-                s.lab_hist.append((now, (float(m[0]), float(m[1]), float(m[2]))))
+                if s.disturb < self.hot:      # a hand in the crop is not its colour
+                    s.lab_hist.append((now, (float(m[0]), float(m[1]), float(m[2]))))
                 s.lab_hist = [x for x in s.lab_hist if x[0] >= now - 12]
             ring = self._ring(sm, s, dets, sm.shape[1], sm.shape[0])
             if ring is not None:
                 s.ring_hist.append((now, ring))
                 s.ring_hist = [x for x in s.ring_hist if x[0] >= now - 12]
+                plate_rings.append(ring[0])
             if self.face_model is not None:
                 R2 = max(6, int(s.ar * fw * 1.15))
                 c2 = frame[max(0, cy - R2):cy + R2, max(0, cx - R2):cx + R2]
                 if c2.size:
                     crops.append((s, c2))
+        if plate_rings:
+            # Light moves the whole plate at once; a neighbour being flipped
+            # moves one ring. The verdict asks the plate, not the ring.
+            self.plate_hist.append((now, float(st.median(plate_rings))))
+            self.plate_hist = [x for x in self.plate_hist if x[0] >= now - 12]
         if crops:
             # Read the face where the engine actually reasons — at the anchor.
             # Classifying the detection box instead was hiding the retrained
@@ -476,13 +495,11 @@ class SlotEngine:
             if busy:
                 if s.episode is None:
                     self.stats["episodes"] = self.stats.get("episodes", 0) + 1
+                    q0 = (s.quiet_ts or now) - self.before_window
+                    q1 = (s.quiet_ts or now) + 0.01
                     s.episode = {"t0": s.quiet_ts or s.seen_ts, "gap": 0.0,
-                                 "face_before": self._dominant(s.face_hist,
-                                                               (s.quiet_ts or now) - 6.0,
-                                                               (s.quiet_ts or now) + 0.01),
-                                 "lab_before": self._mean_lab(s.lab_hist,
-                                                              (s.quiet_ts or now) - 6.0,
-                                                              (s.quiet_ts or now) + 0.01)}
+                                 "face_before": self._dominant(s.face_hist, q0, q1),
+                                 "lab_before": self._mean_lab(s.lab_hist, q0, q1)}
                 if s.absent_since is not None:
                     s.episode["gap"] = max(s.episode["gap"], now - s.absent_since)
                 s.episode["due"] = now + self.verdict_delay
