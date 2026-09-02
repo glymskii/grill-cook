@@ -605,6 +605,11 @@
     0.662,
     0.343,
     438
+   ],
+   [
+    0.707,
+    0.249,
+    446
    ]
   ],
   "unclear": [
@@ -661,6 +666,7 @@
   "slot 22: flip 485 -> 445 (engine verdict at 448.8 led to the strip: raw at 439, brown from 447; the 485 candidate had the patty already brown on both sides -> unclear)",
   "extra flip at (0.662,0.343)@438: engine pid 14 verdict led to the strip: raw at 435, brown from 443; the old run had only a 22-s bare slot there",
   "extra cheese places from the 4b review strips: six engine flags at 658/814/846/853/861/897 were real placements the old-run anchors did not address",
-  "two more cheese places from the final strips (824, 848): real placements the old-run anchors did not address"
+  "two more cheese places from the final strips (824, 848): real placements the old-run anchors did not address",
+  "extra flip at (0.707,0.249)@446: RF-DETR run pid 17 verdict led to the strip - raw pink at 444, brown at 449; a beef patty the old run never anchored"
  ]
 }
