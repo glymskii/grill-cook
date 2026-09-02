@@ -613,10 +613,43 @@
     0.546,
     586
    ]
+  ],
+  "cheese": [
+   [
+    0.633,
+    0.438,
+    658
+   ],
+   [
+    0.667,
+    0.319,
+    814
+   ],
+   [
+    0.597,
+    0.443,
+    846
+   ],
+   [
+    0.551,
+    0.551,
+    853
+   ],
+   [
+    0.567,
+    0.297,
+    861
+   ],
+   [
+    0.423,
+    0.506,
+    897
+   ]
   ]
  },
  "_corrections": [
   "slot 22: flip 485 -> 445 (engine verdict at 448.8 led to the strip: raw at 439, brown from 447; the 485 candidate had the patty already brown on both sides -> unclear)",
-  "extra flip at (0.662,0.343)@438: engine pid 14 verdict led to the strip: raw at 435, brown from 443; the old run had only a 22-s bare slot there"
+  "extra flip at (0.662,0.343)@438: engine pid 14 verdict led to the strip: raw at 435, brown from 443; the old run had only a 22-s bare slot there",
+  "extra cheese places from the 4b review strips: six engine flags at 658/814/846/853/861/897 were real placements the old-run anchors did not address"
  ]
 }

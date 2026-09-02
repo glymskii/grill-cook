@@ -67,6 +67,7 @@ class Slot:
     cheesed_ts: float = 0.0        # when the slice landed
     last_xy: tuple | None = None   # where the patty was last actually seen
     pre_cheese_lab: tuple | None = None   # the crop before the slice landed
+    cheese_pending: tuple | None = None   # (t0, opened, before): a jump awaiting confirmation
 
     def elapsed(self, now: float) -> float:
         ref = self.absent_since if self.absent_since is not None else now
@@ -84,7 +85,8 @@ class SlotEngine:
                  cheese_window=4.0, occupied_dist=40.0, max_backdate=30.0,
                  history_step=0.5, shadow_time=10.0, show_after=4.0,
                  before_window=3.0, strong_dl=30.0, cheese_jump=20.0,
-                 cheese_min_age=20.0, undress_after=10.0, face_model=None):
+                 cheese_min_age=20.0, undress_after=10.0, cheese_confirm=8.0,
+                 face_model=None):
         self.targets = targets
         self.claim_frac = claim_frac       # how far from its anchor a patty may be found
         self.settle_time = settle_time     # rest needed before the anchor is frozen
@@ -121,6 +123,7 @@ class SlotEngine:
         self.cheese_jump = cheese_jump     # brighter by this much across an episode = a slice
         self.cheese_min_age = cheese_min_age   # nobody dresses a patty this young
         self.undress_after = undress_after     # the place looked pre-cheese this long: flag off
+        self.cheese_confirm = cheese_confirm   # seconds the light must hold before a slice is believed
         # optional callable: list of BGR crops -> list of class ids. Given one,
         # the face is read at the anchor instead of at the detection box.
         self.face_model = face_model
@@ -223,12 +226,10 @@ class SlotEngine:
         all (the history keeps 12 s). Only quiet frames ever enter the history, so
         this is never a hand - but it must not be empty either: ten verdicts on
         real flips died as 'before-unknown' for want of three quiet seconds."""
-        recent = [l for t, l in hist if t1 - self.before_window <= t <= t1]
+        recent = [l for t, l in hist if t <= t1][-10:]          # ~2 quiet seconds at 5 fps
         if len(recent) < 3:
-            recent = [l for t, l in hist if t <= t1][-5:]
-        if not recent:
             return None
-        return tuple(st.mean(v[i] for v in recent) for i in range(3))
+        return tuple(st.median(v[i] for v in recent) for i in range(3))
 
     def _swap(self, s: Slot, now: float):
         """The patty in this place was replaced: close its cook, start a new one."""
@@ -311,15 +312,17 @@ class SlotEngine:
             # classifier only breaks ties for a small jump, where a slice on an
             # already-golden patty adds little light.
             jump = max(-dL, 0.0)
-            brighter = jump >= self.cheese_jump or \
-                (jump >= 0.5 * self.cheese_jump and after_face == 2 and self._trust_face(s))
+            brighter = jump >= self.cheese_jump
             yellower = -db >= self.topping_db
             age_ok = ep["t0"] - s.placed_ts >= self.cheese_min_age
             if (brighter or yellower) and age_ok and not s.cheesed:
-                s.cheesed, s.cheesed_ts = True, ep["t0"]
-                s.pre_cheese_lab = before_lab       # what to come back to if the slice leaves
-                self._emit("dressed", s)
-                return bump("no/cheese")
+                # A jump opens a candidacy, it does not dress the patty: a spatula
+                # resting over the crop, a paler patty carried across it and a
+                # sausage all jump the same way and are gone in seconds. The slice
+                # stays - so the light must still be there in 8 s, and where the
+                # classifier is trusted it must by then read cheese at rest.
+                s.cheese_pending = (ep["t0"], now, before_lab)
+                return bump("no/cheese-pending")
             # A dressed patty is finished; if its place went dark by this much
             # the dressed patty left and whatever sits here now is a new one.
             # Read as a flip, that was three of the four false flips on the shift.
@@ -430,6 +433,23 @@ class SlotEngine:
                 if c2.size:
                     crops.append((s, c2))
         for s in self.slots.values():
+            if s.anchored and s.cheese_pending and s.disturb < self.hot:
+                t0, opened, before = s.cheese_pending
+                if now - opened >= self.cheese_confirm:
+                    recent = self._mean_lab(s.lab_hist, now - 4.0, now)
+                    held = recent is not None and (recent[0] - before[0] >= self.cheese_jump or
+                                                   before[2] - recent[2] >= self.topping_db)
+                    face = self._dominant(s.face_hist, now - 6.0, now)
+                    face_ok = (not self._trust_face(s)) or face == 2
+                    if held and face_ok:
+                        s.cheesed, s.cheesed_ts, s.pre_cheese_lab = True, t0, before
+                        self._emit("dressed", s)
+                        self.stats["cheese/confirmed"] = self.stats.get("cheese/confirmed", 0) + 1
+                    elif now - opened >= self.cheese_confirm + 6.0 or not held:
+                        self.stats["cheese/cancelled"] = self.stats.get("cheese/cancelled", 0) + 1
+                        s.cheese_pending = None
+                    if s.cheesed:
+                        s.cheese_pending = None
             if not (s.anchored and s.cheesed and s.pre_cheese_lab and s.disturb < self.hot):
                 continue
             if True:

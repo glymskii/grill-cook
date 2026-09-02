@@ -246,6 +246,7 @@ def score_cheese(tag, window=20.0):
     old = json.loads((ROOT / SRC[tag][1]).read_text())
     new = json.loads((ROOT / f"out/v9_review/life_{tag}_new.json").read_text())
     truth = [(old[s]["anchor"][:2], t) for s, ts in gt["cheese"].items() for t in ts]
+    truth += [((x, y), t) for x, y, t in gt.get("extra", {}).get("cheese", [])]
     ev = json.loads((ROOT / f"data/slot_events_{tag}.json").read_text())
     dressed = [e for e in ev if e["type"] == "dressed"]
     flags = []
