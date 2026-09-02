@@ -86,14 +86,16 @@ class Worker:
         if self.engine:
             self.engine.targets.update({
                 "A": settings["target_a"], "B": settings["target_b"],
-                "tol_early": settings["tol_early"], "tol_late": settings["tol_late"]})
+                "tol_early": settings["tol_early"], "tol_late": settings["tol_late"],
+                "skus": settings.get("_skus") or None})
         running = self.pipe and self.pipe.is_alive()
         if running:
             self.pipe.s = settings         # ROI/targets apply live, no restart
         if run and not running:
             self.engine = TimerEngine({"A": settings["target_a"], "B": settings["target_b"],
                                        "tol_early": settings["tol_early"],
-                                       "tol_late": settings["tol_late"]})
+                                       "tol_late": settings["tol_late"],
+                                       "skus": settings.get("_skus") or None})
             self.engine.on_event = self._on_event
             self.pipe = Pipeline(settings, self.engine)
             self.pipe.start()

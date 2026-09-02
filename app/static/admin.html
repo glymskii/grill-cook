@@ -333,10 +333,19 @@ async function refreshSkus(){skuState=await j('/api/skus');
     return `<div class="kpi" style="${act?'outline:2px solid var(--ok)':''}">
       <div class="v" style="font-size:15px">${k.name}</div>
       <div class="l num">A ${k.target_a}s · B ${k.target_b}s · ±${k.tol_early}/${k.tol_late}</div>
+      <div class="l" style="margin-top:4px">auto-assign by colour:
+        <select class="sm" onchange="skuColour('${k.id}',this.value)">
+          <option value="" ${!k.colour?'selected':''}>off</option>
+          <option value="pale" ${k.colour==='pale'?'selected':''}>pale patty (chicken)</option>
+          <option value="dark" ${k.colour==='dark'?'selected':''}>pink patty (beef)</option>
+        </select></div>
       <div style="margin-top:6px">${act?'<span class="note">active</span>':`<button class="sm" onclick="skuAct('activate','${k.id}')">Activate</button>`}
       <button class="ghost sm" onclick="skuLoad('${k.id}')">Edit</button>
       ${act?'':`<button class="ghost sm" onclick="skuAct('delete','${k.id}')">✕</button>`}</div></div>`;
   }).join('')||'<span class="note">no products yet — set numbers below and “Save as new product”.</span>';}
+window.skuColour=async(id,colour)=>{const k=skuState.skus.find(x=>x.id===id);if(!k)return;
+  if(colour)k.colour=colour;else delete k.colour;
+  await j('/api/skus',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'save',sku:k})});refreshSkus();};
 window.skuAct=async(action,id)=>{await j('/api/skus',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,id})});refreshSkus();loadSettings();};
 window.skuLoad=id=>{const k=skuState.skus.find(x=>x.id===id);if(!k)return;
   NUMS.forEach(f=>$(f).value=k[f]);window._editSku=k;};

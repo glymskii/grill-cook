@@ -404,9 +404,26 @@ def active_shift():
     return None
 
 
+async def skus_by_colour():
+    """Per-patty standards for the edge worker: the cards flagged with a colour.
+    A patty on the plate is assigned by the redness it rests at (pale chicken
+    vs pink beef), so a station can cook two products under two standards
+    without anyone touching the screen. Empty when no card is flagged."""
+    out = {}
+    for sku in await db.kv_get("skus") or []:
+        if sku.get("colour") in ("pale", "dark"):
+            out[sku["colour"]] = {"A": sku["target_a"], "B": sku["target_b"],
+                                  "tol_early": sku["tol_early"], "tol_late": sku["tol_late"],
+                                  "name": sku.get("name", "")}
+    if out:
+        out["a_below"] = 132
+    return out
+
+
 async def push_config():
     if agent_ws is not None:
         try:
+            settings["_skus"] = await skus_by_colour()
             await agent_ws.send_text(json.dumps(
                 {"type": "config", "settings": settings, "run": desired_run,
                  "shifts": shifts}))
@@ -480,6 +497,8 @@ async def post_skus(request: Request, body: dict):
     if action == "save":
         sku = body["sku"]
         sku.setdefault("id", secrets.token_hex(4))
+        if sku.get("colour") not in ("pale", "dark"):
+            sku.pop("colour", None)
         skus = [x for x in skus if x["id"] != sku["id"]] + [sku]
     elif action == "delete":
         skus = [x for x in skus if x["id"] != body["id"]]
@@ -493,6 +512,8 @@ async def post_skus(request: Request, body: dict):
         await push_config()
     await db.kv_set("skus", skus)
     await db.audit(actor_email(request), f"sku.{action}", body)
+    if action != "activate":
+        await push_config()
     return {"skus": skus, "active": await db.kv_get("active_sku")}
 
 

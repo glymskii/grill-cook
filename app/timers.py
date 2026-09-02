@@ -97,6 +97,8 @@ class LivePatty:
     settled_since: float = 0.0              # when it last came to rest
     other_since: float = 0.0                # first frame the crop stopped being a patty
     kf: KF | None = None
+    sku: str | None = None                  # which standard applies, once the patty has shown its colour
+    a_hist: list = field(default_factory=list)   # (t, raw a* of the matched box), for the SKU only
 
     def elapsed(self, now: float) -> float:
         if self.missing_since is not None:
@@ -198,13 +200,41 @@ class TimerEngine:
         if self.on_event:
             self.on_event(ev)
 
+    def targets_for(self, p: LivePatty) -> dict:
+        """The standard for THIS patty. A station cooks more than one product;
+        with `skus` in the targets a patty is assigned by the colour it rests at
+        (pale chicken vs pink beef: redness a* below/above `a_below`, measured
+        138-144 against 123-126 with nothing in between) once it has shown it
+        for 20 quiet readings. Until then, and without skus, the station-wide
+        targets apply. Ported from the slot engine, where 13 of 13 patties on
+        the long shift were assigned right."""
+        skus = self.targets.get("skus")
+        if not skus:
+            return self.targets
+        if len(p.a_hist) >= 20 and self._now - p.placed_ts >= 20:
+            # The median of the raw box redness over the last 15 s - not the
+            # smoothed colour: a track that flickers between two touching
+            # patties (this engine still does that) averages the two into a
+            # value between the classes, while the median follows the majority.
+            # Re-read on every call, with hysteresis.
+            a = sorted(v for _, v in p.a_hist)[len(p.a_hist) // 2]
+            mid = skus.get("a_below", 132)
+            if p.sku is None:
+                p.sku = "pale" if a < mid else "dark"
+            elif p.sku == "pale" and a > mid + 3:
+                p.sku = "dark"
+            elif p.sku == "dark" and a < mid - 3:
+                p.sku = "pale"
+        return skus.get(p.sku, self.targets) if p.sku else self.targets
+
     def _emit(self, kind: str, p: LivePatty, extra: dict | None = None):
+        tg = self.targets_for(p)
         ev = {"ts": round(time.time(), 2), "ts_video": round(self._now, 2),
               "type": kind, "pid": p.pid,
               "side": p.side, "flips": p.flips,
               "side_a": round(p.side_time["A"], 1), "side_b": round(p.side_time["B"], 1),
-              "ta": self.targets["A"], "tb": self.targets["B"],
-              "te": self.targets["tol_early"], "tl": self.targets["tol_late"]}
+              "ta": tg["A"], "tb": tg["B"],
+              "te": tg["tol_early"], "tl": tg["tol_late"], "sku": p.sku}
         if extra:
             ev.update(extra)
         self._emit_raw(ev)
@@ -226,8 +256,8 @@ class TimerEngine:
         self._emit_raw({"ts": round(time.time(), 2), "type": "scene_cut",
                         "n_dropped": n})
 
-    def _grade_flip(self, side: str, elapsed: float) -> str:
-        t = self.targets
+    def _grade_flip(self, side: str, elapsed: float, t: dict | None = None) -> str:
+        t = t or self.targets
         if elapsed < t[side] - t["tol_early"]:
             return "early"
         if elapsed > t[side] + t["tol_late"]:
@@ -477,8 +507,9 @@ class TimerEngine:
             p.crust_pending = (now, ref_l, crowd_now)
 
     def _do_flip(self, p: "LivePatty", now: float, elapsed: float, source: str):
-        grade = self._grade_flip(p.side, elapsed)
-        p.bonus = round(self.targets[p.side] - elapsed, 1) if grade == "early" else 0.0
+        tg = self.targets_for(p)
+        grade = self._grade_flip(p.side, elapsed, tg)
+        p.bonus = round(tg[p.side] - elapsed, 1) if grade == "early" else 0.0
         p.side_time[p.side] = elapsed
         p.side = "B" if p.side == "A" else "A"
         p.side_started = now
@@ -546,6 +577,8 @@ class TimerEngine:
                     p.motion = 0.75 * p.motion + 0.25 * min(step, 3.0)
                 p.last_det = (cx, cy)
                 if lab:
+                    p.a_hist.append((now, lab[1]))
+                    p.a_hist = [x for x in p.a_hist if x[0] >= now - 15]
                     p.lab = lab if not p.lab else tuple(
                         0.85 * o + 0.15 * n for o, n in zip(p.lab, lab))
                     p.lab_hist.append((now, p.lab))
@@ -667,7 +700,8 @@ class TimerEngine:
         t = self.targets
         out = []
         for p in self.alive.values():
-            target = t[p.side] + p.bonus
+            tg = self.targets_for(p)
+            target = tg[p.side] + p.bonus
             elapsed = p.elapsed(now)
             fb, p.flip_feedback = p.flip_feedback, None    # one-shot to the HUD
             out.append({
@@ -681,6 +715,7 @@ class TimerEngine:
                 "missing": p.missing_since is not None,
                 "missing_for": round(now - p.missing_since, 1) if p.missing_since else 0.0,
                 "feedback": fb,
+                "sku": p.sku, "tol_late": tg["tol_late"],
             })
         return {"patties": out, "session": dict(self.session), "done": len(self.done),
                 "scene_cut_ts": round(self.scene_cut_ts, 2)}
