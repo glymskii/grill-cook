@@ -239,6 +239,37 @@ def score(tag, window=12.0):
     print("  false :", false)
 
 
+def score_cheese(tag, window=20.0):
+    """DRESSED flags against the hand-labelled cheese placements: a flag with no
+    placement within the window at that place is a false dressing."""
+    gt = json.loads((ROOT / f"data/flip_gt_slots_{tag}.json").read_text())
+    old = json.loads((ROOT / SRC[tag][1]).read_text())
+    new = json.loads((ROOT / f"out/v9_review/life_{tag}_new.json").read_text())
+    truth = [(old[s]["anchor"][:2], t) for s, ts in gt["cheese"].items() for t in ts]
+    ev = json.loads((ROOT / f"data/slot_events_{tag}.json").read_text())
+    dressed = [e for e in ev if e["type"] == "dressed"]
+    flags = []
+    for e in dressed:
+        pl = [(e["x"], e["y"])] if e.get("x") is not None else []
+        if str(e["pid"]) in new:
+            pl.append(tuple(new[str(e["pid"])]["anchor"][:2]))
+        flags.append((pl, e["ts_video"], e["pid"]))
+    def dist(pl, q):
+        return min((math.hypot(x - q[0], y - q[1]) for x, y in pl), default=9.0)
+    hit_t, hit_f = set(), set()
+    pairs = sorted((dist(pl, p), abs(t - ct), i, j)
+                   for i, (p, t) in enumerate(truth) for j, (pl, ct, _) in enumerate(flags)
+                   if abs(t - ct) <= window and dist(pl, p) <= 0.05)
+    for d, dt, i, j in pairs:
+        if i in hit_t or j in hit_f:
+            continue
+        hit_t.add(i); hit_f.add(j)
+    print(f"{tag} cheese: truth {len(truth)} placements, engine {len(flags)} flags -> "
+          f"caught {len(hit_t)}/{len(truth)}, false/early flags {len(flags) - len(hit_f)}")
+    print("  false/early:", [(sid, round(ct, 1)) for j, (_, ct, sid) in enumerate(flags) if j not in hit_f])
+    print("  missed:", [t for i, (_, t) in enumerate(truth) if i not in hit_t])
+
+
 if __name__ == "__main__":
     cmd, tag = sys.argv[1], sys.argv[2]
-    {"trace": trace, "candidates": candidates, "score": score}[cmd](tag)
+    {"trace": trace, "candidates": candidates, "score": score, "score-cheese": score_cheese}[cmd](tag)

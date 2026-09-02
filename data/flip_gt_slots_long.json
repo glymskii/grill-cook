@@ -600,6 +600,11 @@
     0.635,
     0.448,
     474
+   ],
+   [
+    0.662,
+    0.343,
+    438
    ]
   ],
   "unclear": [
@@ -611,6 +616,7 @@
   ]
  },
  "_corrections": [
-  "slot 22: flip 485 -> 445 (engine verdict at 448.8 led to the strip: raw at 439, brown from 447; the 485 candidate had the patty already brown on both sides -> unclear)"
+  "slot 22: flip 485 -> 445 (engine verdict at 448.8 led to the strip: raw at 439, brown from 447; the 485 candidate had the patty already brown on both sides -> unclear)",
+  "extra flip at (0.662,0.343)@438: engine pid 14 verdict led to the strip: raw at 435, brown from 443; the old run had only a 22-s bare slot there"
  ]
 }

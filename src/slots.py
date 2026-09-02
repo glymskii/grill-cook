@@ -66,6 +66,7 @@ class Slot:
     face_quiet_other: int = 0      # ...of which called this patty 'not a patty'
     cheesed_ts: float = 0.0        # when the slice landed
     last_xy: tuple | None = None   # where the patty was last actually seen
+    pre_cheese_lab: tuple | None = None   # the crop before the slice landed
 
     def elapsed(self, now: float) -> float:
         ref = self.absent_since if self.absent_since is not None else now
@@ -82,7 +83,8 @@ class SlotEngine:
                  hot=0.35, topping_db=15.0, room_max=25.0, hold_frac=0.8,
                  cheese_window=4.0, occupied_dist=40.0, max_backdate=30.0,
                  history_step=0.5, shadow_time=10.0, show_after=4.0,
-                 before_window=3.0, strong_dl=30.0, face_model=None):
+                 before_window=3.0, strong_dl=30.0, cheese_jump=20.0,
+                 cheese_min_age=20.0, undress_after=10.0, face_model=None):
         self.targets = targets
         self.claim_frac = claim_frac       # how far from its anchor a patty may be found
         self.settle_time = settle_time     # rest needed before the anchor is frozen
@@ -116,6 +118,9 @@ class SlotEngine:
         self.show_after = show_after       # a ring is provisional until this age
         self.before_window = before_window # quiet seconds before an episode that count as 'before'
         self.strong_dl = strong_dl         # a colour step this big outranks the classifier
+        self.cheese_jump = cheese_jump     # brighter by this much across an episode = a slice
+        self.cheese_min_age = cheese_min_age   # nobody dresses a patty this young
+        self.undress_after = undress_after     # the place looked pre-cheese this long: flag off
         # optional callable: list of BGR crops -> list of class ids. Given one,
         # the face is read at the anchor instead of at the detection box.
         self.face_model = face_model
@@ -212,6 +217,34 @@ class SlotEngine:
         if first < s.placed_ts:
             s.placed_ts = s.side_started = first
 
+    def _lab_before(self, hist, t1: float):
+        """The crop's colour before an episode: the quiet seconds just before it,
+        and when a busy minute left none there, the last quiet seconds it has at
+        all (the history keeps 12 s). Only quiet frames ever enter the history, so
+        this is never a hand - but it must not be empty either: ten verdicts on
+        real flips died as 'before-unknown' for want of three quiet seconds."""
+        recent = [l for t, l in hist if t1 - self.before_window <= t <= t1]
+        if len(recent) < 3:
+            recent = [l for t, l in hist if t <= t1][-5:]
+        if not recent:
+            return None
+        return tuple(st.mean(v[i] for v in recent) for i in range(3))
+
+    def _swap(self, s: Slot, now: float):
+        """The patty in this place was replaced: close its cook, start a new one."""
+        s.side_time[s.side] += now - s.side_started
+        total = s.side_time["A"] + s.side_time["B"]
+        self._emit("removed", s, {"total": round(total, 1), "swap": True})
+        self.done.append({"pid": s.sid, "side_a": round(s.side_time["A"], 1),
+                          "side_b": round(s.side_time["B"], 1), "flips": s.flips,
+                          "total": round(total, 1)})
+        s.side, s.side_started, s.side_time = "A", now, {"A": 0.0, "B": 0.0}
+        s.flips, s.bonus, s.last_flip_ts = 0, 0.0, 0.0
+        s.cheesed, s.cheesed_ts, s.pre_cheese_lab = False, 0.0, None
+        s.placed_ts = now
+        self.order = sorted([(t, sid) for t, sid in self.order if sid != s.sid] + [(now, s.sid)])
+        self._emit("placed", s, {"swap": True})
+
     def _mean_plate(self, t0: float, t1: float):
         v = [L for t, L in self.plate_hist if t0 <= t <= t1]
         return st.mean(v) if v else None
@@ -265,10 +298,34 @@ class SlotEngine:
                 return bump("no/light-moved")
             db = before_lab[2] - after_lab[2]
             dL = before_lab[0] - after_lab[0]
-            if db <= -self.topping_db:
-                s.cheesed = True                    # a slice landed, not a turn
-                s.cheesed_ts = s.cheesed_ts or ep["t0"]
+            # Cheese is an event, not a state. Measured across every cheese
+            # placement on both sessions the crop gets BRIGHTER by 20-110 L (white
+            # cheese) or yellower by 15-40 b* (American); a chicken patty turning
+            # golden goes the other way, -14..-50 L. Reading "cheese" off the
+            # classifier at rest is what dressed a raw chicken patty for ten
+            # minutes: white on white. Where the classifier is trusted it is the
+            # second witness; a slot younger than 30 s at rest cannot be dressed.
+            # The classifier cannot be the second witness here: at the moment a
+            # white slice lands it says "not a patty" or "cooked" (15@424 was
+            # refused at +108 L). Brightness alone decides above the jump; the
+            # classifier only breaks ties for a small jump, where a slice on an
+            # already-golden patty adds little light.
+            jump = max(-dL, 0.0)
+            brighter = jump >= self.cheese_jump or \
+                (jump >= 0.5 * self.cheese_jump and after_face == 2 and self._trust_face(s))
+            yellower = -db >= self.topping_db
+            age_ok = ep["t0"] - s.placed_ts >= self.cheese_min_age
+            if (brighter or yellower) and age_ok and not s.cheesed:
+                s.cheesed, s.cheesed_ts = True, ep["t0"]
+                s.pre_cheese_lab = before_lab       # what to come back to if the slice leaves
+                self._emit("dressed", s)
                 return bump("no/cheese")
+            # A dressed patty is finished; if its place went dark by this much
+            # the dressed patty left and whatever sits here now is a new one.
+            # Read as a flip, that was three of the four false flips on the shift.
+            if s.cheesed and dL >= self.cheese_jump:
+                self._swap(s, now)
+                return bump("no/swap")
             if dL >= self.flip_dl:
                 via = "crust"
         # The classifier is a witness, not a judge: "not a patty" at the anchor
@@ -372,6 +429,17 @@ class SlotEngine:
                 c2 = frame[max(0, cy - R2):cy + R2, max(0, cx - R2):cx + R2]
                 if c2.size:
                     crops.append((s, c2))
+        for s in self.slots.values():
+            if not (s.anchored and s.cheesed and s.pre_cheese_lab and s.disturb < self.hot):
+                continue
+            if True:
+                recent = self._mean_lab(s.lab_hist, now - self.undress_after, now)
+                quiet = [t for t, _ in s.lab_hist if t >= now - self.undress_after]
+                if recent and len(quiet) >= 8 and \
+                        abs(recent[0] - s.pre_cheese_lab[0]) <= 10 and \
+                        abs(recent[2] - s.pre_cheese_lab[2]) <= 8:
+                    s.cheesed, s.cheesed_ts, s.pre_cheese_lab = False, 0.0, None
+                    self._emit("undressed", s)
         if plate_rings:
             # Light moves the whole plate at once; a neighbour being flipped
             # moves one ring. The verdict asks the plate, not the ring.
@@ -396,13 +464,6 @@ class SlotEngine:
                 if s.absent_since is None and s.disturb < self.hot and not s.episode:
                     s.face_quiet += 1
                     s.face_quiet_other += int(cls == 3)
-                # Cheese is what finishes a patty, and on pale chicken it does not
-                # move b* enough for the colour rule that works on beef — both
-                # surviving false verdicts on the long shift were a dressed patty
-                # being worked or lifted. Where the model is trusted, let it say so.
-                if self._trust_face(s) and not s.cheesed:
-                    if self._dominant(s.face_hist, now - self.cheese_window, now) == 2:
-                        s.cheesed, s.cheesed_ts = True, now - self.cheese_window
 
     @staticmethod
     def _ring(lab, s, dets, fw, fh):
@@ -495,11 +556,10 @@ class SlotEngine:
             if busy:
                 if s.episode is None:
                     self.stats["episodes"] = self.stats.get("episodes", 0) + 1
-                    q0 = (s.quiet_ts or now) - self.before_window
                     q1 = (s.quiet_ts or now) + 0.01
                     s.episode = {"t0": s.quiet_ts or s.seen_ts, "gap": 0.0,
-                                 "face_before": self._dominant(s.face_hist, q0, q1),
-                                 "lab_before": self._mean_lab(s.lab_hist, q0, q1)}
+                                 "face_before": self._dominant(s.face_hist, q1 - 6.0, q1),
+                                 "lab_before": self._lab_before(s.lab_hist, q1)}
                 if s.absent_since is not None:
                     s.episode["gap"] = max(s.episode["gap"], now - s.absent_since)
                 s.episode["due"] = now + self.verdict_delay
@@ -522,6 +582,13 @@ class SlotEngine:
                 # the pixels instead, which needs no slot to exist early
                 continue
             cx, cy, r = d[0], d[1], d[2]
+            # One case may continue a slot before the solid-body rule gets a say:
+            # a patty just PRESSED - the disc grew by a third or more where a slot
+            # went missing a moment ago. Anything else migrating first turned out
+            # to chase the spatula: a lifted patty's box walked five slots off
+            # their places in thirty seconds and the verdicts were judged off-site.
+            if self._migrate(d, now, grown_only=True):
+                continue
             # Patties are solid. A new disc may not overlap an existing slot -
             # measured against the anchor AND the last place the patty was
             # actually seen, because a patty nudged during a flip sits between
@@ -594,11 +661,13 @@ class SlotEngine:
             return True
         return False
 
-    def _migrate(self, d, now: float) -> bool:
+    def _migrate(self, d, now: float, grown_only: bool = False) -> bool:
         """The cook slid a patty to another spot: the place moves, the timer stays."""
         best, bd = None, 1e9
         for s in self.slots.values():
             if s.absent_since is None or now - s.absent_since > self.migrate_window:
+                continue
+            if grown_only and d[2] < 1.3 * s.ar:
                 continue
             dist = math.hypot(d[0] - s.ax, d[1] - s.ay) / max(s.ar, 1e-6)
             if dist < bd and dist <= self.migrate_frac:
