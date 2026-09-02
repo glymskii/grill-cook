@@ -88,7 +88,6 @@ class LivePatty:
     crust_pending: tuple | None = None      # (t_change, ref_L, crowd_L) awaiting proof
     face_hist: list = field(default_factory=list)   # recent face classes (0 raw/1 cooked/2 cheese)
     face: int | None = None                 # stable face, changes only on agreement
-    cheesed: bool = False                   # cheese went on: this patty is finished
     last_det: tuple | None = None           # raw detection centre, unsmoothed
     motion: float = 0.0                     # EMA of raw displacement, in radii
     handling: bool = False                  # in the cook's hands right now
@@ -99,7 +98,6 @@ class LivePatty:
     kf: KF | None = None
     sku: str | None = None                  # which standard applies, once the patty has shown its colour
     a_hist: list = field(default_factory=list)   # (t, raw a* of the matched box), for the SKU only
-    cheesed_ts: float = 0.0                 # when the cheese flag went up, for the log panel
 
     def elapsed(self, now: float) -> float:
         if self.missing_since is not None:
@@ -257,6 +255,12 @@ class TimerEngine:
         self._emit_raw({"ts": round(time.time(), 2), "type": "scene_cut",
                         "n_dropped": n})
 
+    def is_done(self, p: LivePatty, now: float) -> bool:
+        """Both sides cooked to the standard: the second side ran its target.
+        Cheese used to stand in for this and cost us a classifier's mistakes;
+        the clock knows better than the picture whether the patty is finished."""
+        return p.side == "B" and p.elapsed(now) >= self.targets_for(p)["B"] + p.bonus
+
     def _grade_flip(self, side: str, elapsed: float, t: dict | None = None) -> str:
         t = t or self.targets
         if elapsed < t[side] - t["tol_early"]:
@@ -396,9 +400,6 @@ class TimerEngine:
             stable = self._dominant(p.face_hist, now - self.face_window, now)
             if stable is not None:
                 p.face = stable
-                if stable == 2:
-                    p.cheesed = True
-                    p.cheesed_ts = p.cheesed_ts or self._now
                 if stable == 3:
                     p.other_since = p.other_since or now
                     if now - p.other_since > self.other_grace:
@@ -428,11 +429,6 @@ class TimerEngine:
             before = p.face_before
             gap = p.episode_gap
             p.handling, p.face_before, p.episode_gap = False, None, 0.0
-            if after == 2:
-                p.cheesed = True
-                p.cheesed_ts = p.cheesed_ts or self._now
-            if p.cheesed:
-                continue
             # Once both sides are seared they look the same, so a second flip is
             # invisible to the face alone. A patty that genuinely left the
             # griddle and came back settled is one either way.
@@ -713,7 +709,7 @@ class TimerEngine:
                 "elapsed": round(elapsed, 1), "target": target,
                 "bonus": p.bonus,
                 "deadline": round(now - elapsed + target, 2),
-                "cheesed": p.cheesed,
+                "done": self.is_done(p, now),
                 "face": p.face,
                 "missing": p.missing_since is not None,
                 "missing_for": round(now - p.missing_since, 1) if p.missing_since else 0.0,
@@ -725,7 +721,7 @@ class TimerEngine:
                 "side_b": round(p.side_time["B"] + (elapsed - p.side_time[p.side]
                                                     if p.side == "B" else 0), 1),
                 "total": round(now - p.placed_ts, 1),
-                "cheese_for": round(now - p.cheesed_ts, 1) if p.cheesed_ts else 0.0,
+                "done_for": round(elapsed - tg["B"], 1) if (p.side == "B" and elapsed >= tg["B"]) else 0.0,
             })
         return {"patties": out, "session": dict(self.session), "done": len(self.done),
                 "scene_cut_ts": round(self.scene_cut_ts, 2)}

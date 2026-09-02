@@ -155,14 +155,14 @@ def main():
             remain = p["deadline"] - t
             tl_p = p.get("tol_late", tl)
             ring, over = BLUE, False
-            if p.get("cheesed"):
-                # cheese means finished: prompting a flip here is the one thing
-                # that makes a cook stop trusting the screen
-                cv2.circle(frame, (x, y), r, (235, 200, 60), 4, cv2.LINE_AA)
-                total = p["elapsed"] + p.get("bonus", 0)
-                mm_, ss = divmod(int(p["elapsed"]), 60)
-                put(frame, "DRESSED", (x, y - r // 8), r / 150, (235, 200, 60), 2)
-                put(frame, f"{mm_}:{ss:02d}", (x, y + int(r * 0.32)), r / 110, WHITE, 2)
+            if p.get("done"):
+                # both sides cooked to the standard: green, and the overrun
+                # counts up so a forgotten patty still shouts
+                over_s = int(p.get("done_for", 0))
+                cv2.circle(frame, (x, y), r, GREEN, 4, cv2.LINE_AA)
+                put(frame, "DONE", (x, y - r // 8), r / 150, GREEN, 2)
+                put(frame, f"+{over_s // 60}:{over_s % 60:02d}", (x, y + int(r * 0.32)), r / 110,
+                    WHITE if over_s < 60 else AMBER, 2)
                 continue
             if p.get("provisional"):
                 # a slot still proving itself: a thin quiet ring, no countdown
@@ -233,7 +233,7 @@ def main():
         yy += 40
         col = [px0 + 22, px0 + int(pw * 0.30), px0 + int(pw * 0.50),
                px0 + int(pw * 0.70), px0 + int(pw * 0.87)]
-        for label, cxx in zip(("#", "total", "side A", "side B", "cheese"), col):
+        for label, cxx in zip(("#", "total", "side A", "side B", "state"), col):
             put(frame, label, (cxx, yy), 0.52, DIM, 1, centre=False)
         yy += 12
         mmss = lambda v: f"{int(v) // 60}:{int(v) % 60:02d}"
@@ -246,18 +246,17 @@ def main():
             if yy > fh - 34:
                 break
             shown += 1
-            hot = RED if p["deadline"] - t <= -p.get("tol_late", tl) and not p.get("cheesed") else None
-            tone = (235, 200, 60) if p.get("cheesed") else (hot or WHITE)
+            hot = RED if p["deadline"] - t <= -p.get("tol_late", tl) and not p.get("done") else None
+            tone = GREEN if p.get("done") else (hot or WHITE)
             put(frame, f"{p.get('no', p['pid'])}", (col[0], yy), 0.7, tone, 2, centre=False)
             put(frame, mmss(p.get("total", 0)), (col[1], yy), 0.66, WHITE, 2, centre=False)
             for key, cxx in (("side_a", col[2]), ("side_b", col[3])):
                 v = p.get(key, 0)
                 live_side = (key == "side_a") == (p["side"] == "A")
                 put(frame, mmss(v) if v else "-", (cxx, yy), 0.62,
-                    AMBER if live_side and not p.get("cheesed") else DIM, 2, centre=False)
-            ch = p.get("cheese_for", 0)
-            put(frame, mmss(ch) if ch else "-", (col[4], yy), 0.62,
-                (235, 200, 60) if ch else DIM, 2, centre=False)
+                    AMBER if live_side and not p.get("done") else DIM, 2, centre=False)
+            state = "DONE" if p.get("done") else p["side"]
+            put(frame, state, (col[4], yy), 0.62, GREEN if p.get("done") else DIM, 2, centre=False)
         if shown < len(live):
             put(frame, f"+{len(live) - shown} more on the plate",
                 (col[0], min(yy + pitch, fh - 12)), 0.55, DIM, 1, centre=False)

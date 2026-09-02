@@ -35,7 +35,7 @@ for r in rows:
         L=life.setdefault(s.sid, {"anchor":(s.ax,s.ay,s.ar),"born":s.placed_ts,"first_seen":r["t"],
                                   "crops":[],"cheesed_ts":0.0,"last":r["t"]})
         L["last"]=r["t"]; L["start"]=s.placed_ts
-        if s.cheesed and not L["cheesed_ts"]: L["cheesed_ts"]=s.cheesed_ts or r["t"]
+        if eng.is_done(s, r["t"]) and not L["cheesed_ts"]: L["cheesed_ts"]=r["t"]   # 'done' moment, kept under the old key
         if not L["crops"] or r["t"]-L["crops"][-1][0] >= STEP:
             R=int(s.ar*fw*1.3); cx,cy=int(s.ax*fw),int(s.ay*fh)
             c=f[max(0,cy-R):cy+R, max(0,cx-R):cx+R]
@@ -57,7 +57,7 @@ for sid,L in sorted(life.items()):
     while len(strip)<14: strip.append(np.zeros((110,110,3),np.uint8))
     row=np.hstack(strip); lab=np.zeros((22,row.shape[1],3),np.uint8)
     txt=(f"#{sid}  start {L['start']:.1f}s (born {L['first_seen']:.1f})  life {L['last']-L['start']:.0f}s  "
-         f"flips {flips.get(sid,[])}  cheesed@{L['cheesed_ts']:.0f}" if L["cheesed_ts"] else
+         f"flips {flips.get(sid,[])}  done@{L['cheesed_ts']:.0f}" if L["cheesed_ts"] else
          f"#{sid}  start {L['start']:.1f}s (born {L['first_seen']:.1f})  life {L['last']-L['start']:.0f}s  flips {flips.get(sid,[])}")
     cv2.putText(lab,txt,(4,16),cv2.FONT_HERSHEY_DUPLEX,0.48,(255,255,255),1)
     tiles.append(np.vstack([lab,row]))
@@ -72,5 +72,5 @@ json.dump(summary, open(f"/tmp/life_{TAG}.json","w"), indent=0)
 json.dump(ev, open(str(ROOT / f"data/slot_events_{TAG}.json"),"w"))
 json.dump(summary, open(str(ROOT / f"out/v9_review/life_{TAG}_new.json"),"w"), indent=0)
 print("verdict outcomes:", dict(sorted(eng.stats.items(), key=lambda kv:-kv[1])))
-print(TAG, "slots:", len(life), "cheesed:", sum(1 for L in life.values() if L["cheesed_ts"]),
+print(TAG, "slots:", len(life), "done:", sum(1 for L in life.values() if L["cheesed_ts"]),
       "flips:", sum(len(v) for v in flips.values()))

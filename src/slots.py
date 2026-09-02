@@ -53,7 +53,6 @@ class Slot:
     ring_hist: list = field(default_factory=list)  # (t, lab of the griddle around it)
     claim_hist: list = field(default_factory=list)  # (t, was the patty found here)
     face: int | None = None
-    cheesed: bool = False
     episode: dict | None = None    # open manipulation, or one awaiting its verdict
     offsets: list = field(default_factory=list)    # (t, dx, dy) of claims, for re-anchoring
     bonus: float = 0.0
@@ -64,10 +63,7 @@ class Slot:
     quiet_ts: float = 0.0          # last moment nothing was happening here
     face_quiet: int = 0            # readings taken while settled and occupied
     face_quiet_other: int = 0      # ...of which called this patty 'not a patty'
-    cheesed_ts: float = 0.0        # when the slice landed
     last_xy: tuple | None = None   # where the patty was last actually seen
-    pre_cheese_lab: tuple | None = None   # the crop before the slice landed
-    cheese_pending: tuple | None = None   # (t0, opened, before): a jump awaiting confirmation
     sku: str | None = None                # which standard applies, once the patty has shown its colour
 
     def elapsed(self, now: float) -> float:
@@ -83,10 +79,9 @@ class SlotEngine:
                  min_side_before_flip=25.0, reanchor_tol=0.35, migrate_frac=3.0,
                  migrate_window=4.0, other_grace=2.0, episode_min=0.6,
                  hot=0.35, topping_db=15.0, room_max=25.0, hold_frac=0.8,
-                 cheese_window=4.0, occupied_dist=40.0, max_backdate=30.0,
+                 occupied_dist=40.0, max_backdate=30.0,
                  history_step=0.5, shadow_time=10.0, show_after=4.0,
-                 before_window=3.0, strong_dl=30.0, cheese_jump=20.0,
-                 cheese_min_age=20.0, undress_after=10.0, cheese_confirm=8.0,
+                 before_window=3.0, strong_dl=30.0,
                  same_face_dl=26.0, face_model=None):
         self.targets = targets
         self.claim_frac = claim_frac       # how far from its anchor a patty may be found
@@ -110,10 +105,9 @@ class SlotEngine:
         self.other_grace = other_grace
         self.episode_min = episode_min
         self.hot = hot                     # crop change that counts as a hand
-        self.topping_db = topping_db       # yellow jump that means cheese, not a turn
+        self.topping_db = topping_db       # a yellow jump is a topping, never a turn
         self.room_max = room_max           # light moved this much: do not judge
         self.hold_frac = hold_frac         # the patty must hold its place to be judged
-        self.cheese_window = cheese_window # sustained 'cheese' that retires a slot
         self.occupied_dist = occupied_dist # crop this far from the ring = occupied
         self.max_backdate = max_backdate
         self.history_step = history_step
@@ -121,10 +115,6 @@ class SlotEngine:
         self.show_after = show_after       # a ring is provisional until this age
         self.before_window = before_window # quiet seconds before an episode that count as 'before'
         self.strong_dl = strong_dl         # a colour step this big outranks the classifier
-        self.cheese_jump = cheese_jump     # brighter by this much across an episode = a slice
-        self.cheese_min_age = cheese_min_age   # nobody dresses a patty this young
-        self.undress_after = undress_after     # the place looked pre-cheese this long: flag off
-        self.cheese_confirm = cheese_confirm   # seconds the light must hold before a slice is believed
         self.same_face_dl = same_face_dl       # below this, an unchanged face outranks the colour
         # optional callable: list of BGR crops -> list of class ids. Given one,
         # the face is read at the anchor instead of at the detection box.
@@ -261,10 +251,15 @@ class SlotEngine:
                           "total": round(total, 1)})
         s.side, s.side_started, s.side_time = "A", now, {"A": 0.0, "B": 0.0}
         s.flips, s.bonus, s.last_flip_ts = 0, 0.0, 0.0
-        s.cheesed, s.cheesed_ts, s.pre_cheese_lab = False, 0.0, None
         s.placed_ts = now
         self.order = sorted([(t, sid) for t, sid in self.order if sid != s.sid] + [(now, s.sid)])
         self._emit("placed", s, {"swap": True})
+
+    def is_done(self, s: Slot, now: float) -> bool:
+        """Both sides cooked to the standard: the second side ran its target.
+        Cheese used to stand in for this and cost us a classifier's mistakes;
+        the clock knows better than the picture whether the patty is finished."""
+        return s.side == "B" and s.elapsed(now) >= self.targets_for(s)["B"] + s.bonus
 
     def _mean_plate(self, t0: float, t1: float):
         v = [L for t, L in self.plate_hist if t0 <= t <= t1]
@@ -319,45 +314,9 @@ class SlotEngine:
                 return bump("no/light-moved")
             db = before_lab[2] - after_lab[2]
             dL = before_lab[0] - after_lab[0]
-            # Cheese is an event, not a state. Measured across every cheese
-            # placement on both sessions the crop gets BRIGHTER by 20-110 L (white
-            # cheese) or yellower by 15-40 b* (American); a chicken patty turning
-            # golden goes the other way, -14..-50 L. Reading "cheese" off the
-            # classifier at rest is what dressed a raw chicken patty for ten
-            # minutes: white on white. Where the classifier is trusted it is the
-            # second witness; a slot younger than 30 s at rest cannot be dressed.
-            # The classifier cannot be the second witness here: at the moment a
-            # white slice lands it says "not a patty" or "cooked" (15@424 was
-            # refused at +108 L). Brightness alone decides above the jump; the
-            # classifier only breaks ties for a small jump, where a slice on an
-            # already-golden patty adds little light.
-            jump = max(-dL, 0.0)
-            brighter = jump >= self.cheese_jump
-            yellower = -db >= self.topping_db
-            age_ok = ep["t0"] - s.placed_ts >= self.cheese_min_age
-            if (brighter or yellower) and age_ok and not s.cheesed:
-                # A jump opens a candidacy, it does not dress the patty: a spatula
-                # resting over the crop, a paler patty carried across it and a
-                # sausage all jump the same way and are gone in seconds. The slice
-                # stays - so the light must still be there in 8 s, and where the
-                # classifier is trusted it must by then read cheese at rest.
-                s.cheese_pending = (ep["t0"], now, before_lab)
-                return bump("no/cheese-pending")
-            # A dressed patty is finished; if its place went dark by this much
-            # the dressed patty left and whatever sits here now is a new one.
-            # Read as a flip, that was three of the four false flips on the shift.
-            if s.cheesed and dL >= self.cheese_jump:
-                self._swap(s, now)
-                return bump("no/swap")
             trusted = self._trust_face(s)
-            # Two more ways a place changes hands, both physical and both read
-            # as flips before: the classifier saw cheese here at rest and now
-            # sees none while the place went dark (the dressed patty left); or
-            # the face went cooked -> raw (cooking is monotonic, a raw face
-            # after a cooked one is a different patty).
-            if trusted and dL >= self.cheese_jump and before_face == 2 and after_face not in (2, None):
-                self._swap(s, now)
-                return bump("no/swap")
+            # A place changes hands when the face goes cooked -> raw: cooking is
+            # monotonic, a raw face after a cooked one is a different patty.
             if trusted and before_face == 1 and after_face == 0 and dL >= self.flip_dl:
                 self._swap(s, now)
                 return bump("no/swap")
@@ -385,8 +344,11 @@ class SlotEngine:
             if after_face is None:
                 return bump("no/after-unknown")
             return bump("no/looks-the-same")
-        if s.cheesed:
-            return bump("no/already-cheesed")
+        # After the second side reached its standard the patty is DONE: nobody
+        # turns a finished patty, so a verdict here is a hand passing or a swap
+        # the occupancy will sort out - never a third side.
+        if self.is_done(s, now):
+            return bump("no/done")
         elapsed = s.side_time[s.side] + (ep["t0"] - s.side_started)
         # Both guards scale with the standard rather than sitting at a constant:
         # 45 s of cooldown was tuned on 150-270 s sides and silently forbade
@@ -473,34 +435,6 @@ class SlotEngine:
                 c2 = frame[max(0, cy - R2):cy + R2, max(0, cx - R2):cx + R2]
                 if c2.size:
                     crops.append((s, c2))
-        for s in self.slots.values():
-            if s.anchored and s.cheese_pending and s.disturb < self.hot:
-                t0, opened, before = s.cheese_pending
-                if now - opened >= self.cheese_confirm:
-                    recent = self._mean_lab(s.lab_hist, now - 4.0, now)
-                    held = recent is not None and (recent[0] - before[0] >= self.cheese_jump or
-                                                   before[2] - recent[2] >= self.topping_db)
-                    face = self._dominant(s.face_hist, now - 6.0, now)
-                    face_ok = (not self._trust_face(s)) or face == 2
-                    if held and face_ok:
-                        s.cheesed, s.cheesed_ts, s.pre_cheese_lab = True, t0, before
-                        self._emit("dressed", s)
-                        self.stats["cheese/confirmed"] = self.stats.get("cheese/confirmed", 0) + 1
-                    elif now - opened >= self.cheese_confirm + 6.0 or not held:
-                        self.stats["cheese/cancelled"] = self.stats.get("cheese/cancelled", 0) + 1
-                        s.cheese_pending = None
-                    if s.cheesed:
-                        s.cheese_pending = None
-            if not (s.anchored and s.cheesed and s.pre_cheese_lab and s.disturb < self.hot):
-                continue
-            if True:
-                recent = self._mean_lab(s.lab_hist, now - self.undress_after, now)
-                quiet = [t for t, _ in s.lab_hist if t >= now - self.undress_after]
-                if recent and len(quiet) >= 8 and \
-                        abs(recent[0] - s.pre_cheese_lab[0]) <= 10 and \
-                        abs(recent[2] - s.pre_cheese_lab[2]) <= 8:
-                    s.cheesed, s.cheesed_ts, s.pre_cheese_lab = False, 0.0, None
-                    self._emit("undressed", s)
         if plate_rings:
             # Light moves the whole plate at once; a neighbour being flipped
             # moves one ring. The verdict asks the plate, not the ring.
@@ -591,8 +525,6 @@ class SlotEngine:
             face = self._dominant(s.face_hist, now - self.face_window, now)
             if face is not None:
                 s.face = face
-                if face == 2 and frame is None:
-                    s.cheesed = True       # with pixels, colour decides this
             if not s.anchored:
                 s.births.append((now, d[0], d[1], d[2]))
                 was = s.anchored
@@ -775,7 +707,7 @@ class SlotEngine:
                 "r": round(s.ar, 4), "side": s.side, "flips": s.flips,
                 "elapsed": round(elapsed, 1), "target": target, "bonus": s.bonus,
                 "deadline": round(now - elapsed + target, 2),
-                "cheesed": s.cheesed, "face": s.face,
+                "done": self.is_done(s, now), "face": s.face,
                 "provisional": (now - s.placed_ts) < self.show_after,
                 "sku": s.sku, "tol_late": tg["tol_late"],
                 "side_a": round(s.side_time["A"] + (elapsed - s.side_time[s.side]
@@ -783,7 +715,7 @@ class SlotEngine:
                 "side_b": round(s.side_time["B"] + (elapsed - s.side_time[s.side]
                                                     if s.side == "B" else 0), 1),
                 "total": round(now - s.placed_ts, 1),
-                "cheese_for": round(now - s.cheesed_ts, 1) if s.cheesed_ts else 0.0,
+                "done_for": round(elapsed - tg["B"], 1) if (s.side == "B" and elapsed >= tg["B"]) else 0.0,
                 "missing": s.absent_since is not None,
                 "missing_for": round(now - s.absent_since, 1) if s.absent_since else 0.0,
                 "feedback": fb,

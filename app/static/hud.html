@@ -125,17 +125,17 @@ function draw(){
     const x=ox+p.x*fw*s,y=oy+p.y*fh*s,r=Math.max(28*devicePixelRatio,p.r*fw*s);
     const remain=p.deadline-now,tol=state.targets?state.targets.tol_late:15;
     const frac=Math.min(1,p.elapsed/(p.target||1)+(now-(state.server_ts||now))/(p.target||1));
-    if(p.cheesed){
-      // cheese is on: this patty is dressed and waiting to leave the griddle,
-      // so it gets a calm badge instead of a flip countdown
+    if(p.done){
+      // both sides cooked to the standard: a calm green badge, and the overrun
+      // counts up so a forgotten patty still gets attention
+      const ov=Math.max(0,Math.floor(p.done_for||0));
       ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.fillStyle='rgba(20,27,35,0.5)';ctx.fill();
-      ctx.lineWidth=4*devicePixelRatio;ctx.strokeStyle='#3ccbe8';ctx.stroke();
-      ctx.fillStyle='#3ccbe8';ctx.textAlign='center';
+      ctx.lineWidth=4*devicePixelRatio;ctx.strokeStyle=ov<60?'#4fd66a':'#f5a623';ctx.stroke();
+      ctx.fillStyle=ov<60?'#4fd66a':'#f5a623';ctx.textAlign='center';
       ctx.font=600+' '+Math.round(r*0.3)+'px system-ui';
-      ctx.fillText('DRESSED',x,y-r*0.05);
-      const tt=Math.floor(p.elapsed);
+      ctx.fillText('DONE',x,y-r*0.05);
       ctx.fillStyle='#e8eef5';ctx.font=600+' '+Math.round(r*0.42)+'px system-ui';
-      ctx.fillText(Math.floor(tt/60)+':'+String(tt%60).padStart(2,'0'),x,y+r*0.42);
+      ctx.fillText('+'+Math.floor(ov/60)+':'+String(ov%60).padStart(2,'0'),x,y+r*0.42);
       continue;
     }
     let ring='#3c74c9',fill='rgba(20,27,35,0.55)';
