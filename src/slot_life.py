@@ -14,7 +14,10 @@ video, dets, targets, t0, t1 = {
 slots.EVENTS=Path(tempfile.mkdtemp())/"e.jsonl"
 ta,tb,te,tl=targets
 eng=slots.SlotEngine({"A":ta,"B":tb,"tol_early":te,"tol_late":tl}, face_model=FaceReader())
-ev=[]; eng.on_event=ev.append
+ev=[]
+eng.on_event=lambda e: ev.append(dict(e, x=getattr(eng.slots.get(e['pid']),'ax',None),
+                                        y=getattr(eng.slots.get(e['pid']),'ay',None),
+                                        r=getattr(eng.slots.get(e['pid']),'ar',None)))
 rows=json.load(open(ROOT/dets))
 cap=cv2.VideoCapture(str(ROOT/video)); fps=cap.get(cv2.CAP_PROP_FPS); i=0
 life={}   # sid -> dict(anchor, born, start, last, crops[(t,img)], cheesed_ts, flips[])
@@ -66,5 +69,7 @@ summary={sid:{"start":round(L["start"],1),"born":round(L["first_seen"],1),"life"
               "anchor":[round(v,3) for v in L["anchor"]],"cheesed":round(L["cheesed_ts"]) if L["cheesed_ts"] else None,
               "flips":flips.get(sid,[])} for sid,L in life.items()}
 json.dump(summary, open(f"/tmp/life_{TAG}.json","w"), indent=0)
+json.dump(ev, open(str(ROOT / f"data/slot_events_{TAG}.json"),"w"))
+json.dump(summary, open(str(ROOT / f"out/v9_review/life_{TAG}_new.json"),"w"), indent=0)
 print(TAG, "slots:", len(life), "cheesed:", sum(1 for L in life.values() if L["cheesed_ts"]),
       "flips:", sum(len(v) for v in flips.values()))

@@ -65,6 +65,7 @@ class Slot:
     face_quiet: int = 0            # readings taken while settled and occupied
     face_quiet_other: int = 0      # ...of which called this patty 'not a patty'
     cheesed_ts: float = 0.0        # when the slice landed
+    last_xy: tuple | None = None   # where the patty was last actually seen
 
     def elapsed(self, now: float) -> float:
         ref = self.absent_since if self.absent_since is not None else now
@@ -73,14 +74,15 @@ class Slot:
 
 class SlotEngine:
     def __init__(self, targets: dict, claim_frac=0.75, settle_time=2.0,
-                 settle_tol=0.25, birth_conf=0.40, birth_suppress=1.3,
+                 settle_tol=0.25, birth_conf=0.40, birth_suppress=1.6,
                  removed_after=6.0, verdict_delay=2.5, face_window=2.5,
                  face_agree=0.6, flip_dl=18.0, flip_cooldown=45.0,
                  min_side_before_flip=25.0, reanchor_tol=0.35, migrate_frac=3.0,
                  migrate_window=4.0, other_grace=2.0, episode_min=0.6,
                  hot=0.35, topping_db=15.0, room_max=25.0, hold_frac=0.8,
                  cheese_window=4.0, occupied_dist=40.0, max_backdate=30.0,
-                 history_step=0.5, other_veto_conf=0.7, face_model=None):
+                 history_step=0.5, shadow_time=10.0, show_after=4.0,
+                 face_model=None):
         self.targets = targets
         self.claim_frac = claim_frac       # how far from its anchor a patty may be found
         self.settle_time = settle_time     # rest needed before the anchor is frozen
@@ -110,9 +112,8 @@ class SlotEngine:
         self.occupied_dist = occupied_dist # crop this far from the ring = occupied
         self.max_backdate = max_backdate
         self.history_step = history_step
-        # a confident box is a patty even if the face model dislikes the crop:
-        # an unsmashed ball of mince reads as 'other' and used to block the birth
-        self.other_veto_conf = other_veto_conf
+        self.shadow_time = shadow_time     # a vacated anchor keeps suppressing births
+        self.show_after = show_after       # a ring is provisional until this age
         # optional callable: list of BGR crops -> list of class ids. Given one,
         # the face is read at the anchor instead of at the detection box.
         self.face_model = face_model
@@ -122,6 +123,7 @@ class SlotEngine:
         # down first were being shown as #2 and #3 because a ball of mince takes
         # seconds to become a patty to the detector.
         self.order: list = []              # (placed_ts, sid), sorted
+        self.shadows: list = []            # (t, x, y, r) places an anchor just left
         self.slots: dict[int, Slot] = {}
         self.next_sid = 1
         self.done: list[dict] = []
@@ -442,6 +444,7 @@ class SlotEngine:
                 s.lab_hist.append((now, d[4]))
                 s.lab_hist = [x for x in s.lab_hist if x[0] >= now - 12]
             s.face_hist = [x for x in s.face_hist if x[0] >= now - 12]
+            s.last_xy = (d[0], d[1])
             s.offsets.append((now, d[0] - s.ax, d[1] - s.ay))
             s.offsets = [x for x in s.offsets if x[0] >= now - 6]
             face = self._dominant(s.face_hist, now - self.face_window, now)
@@ -496,11 +499,23 @@ class SlotEngine:
         for i, d in enumerate(dets):
             if i in taken or d[3] < self.birth_conf:
                 continue
-            if d[5] == 3 and d[3] < self.other_veto_conf:
+            if d[5] == 3:
+                # a glove, a spatula, the grate edge: never a birth. The mince
+                # ball this once let through is recovered by back-dating from
+                # the pixels instead, which needs no slot to exist early
                 continue
             cx, cy, r = d[0], d[1], d[2]
-            if any(math.hypot(cx - s.ax, cy - s.ay) < self.birth_suppress * max(s.ar, r)
-                   for s in self.slots.values()):
+            # Patties are solid. A new disc may not overlap an existing slot -
+            # measured against the anchor AND the last place the patty was
+            # actually seen, because a patty nudged during a flip sits between
+            # the two for a while. The false slot #10 was born exactly there:
+            # 1.05 r from a neighbour whose anchor had just moved 0.02 away.
+            if any(self._overlaps(cx, cy, r, s) for s in self.slots.values()):
+                continue
+            # ...and not on a place an anchor left in the last few seconds
+            self.shadows = [sh for sh in self.shadows if now - sh[0] <= self.shadow_time]
+            if any(math.hypot(cx - sx, cy - sy) < self.birth_suppress * max(sr, r)
+                   for _, sx, sy, sr in self.shadows):
                 continue
             if self._migrate(d, now):
                 continue
@@ -516,6 +531,7 @@ class SlotEngine:
         for sid in [k for k, s in self.slots.items()
                     if s.absent_since and now - s.absent_since > self.removed_after]:
             s = self.slots.pop(sid)
+            self.shadows.append((now, s.ax, s.ay, s.ar))
             s.side_time[s.side] += s.absent_since - s.side_started
             total = s.side_time["A"] + s.side_time["B"]
             self._emit("removed", s, {"total": round(total, 1)})
@@ -553,6 +569,14 @@ class SlotEngine:
         s.ay += dy
         s.offsets.clear()
 
+    def _overlaps(self, cx, cy, r, s: Slot) -> bool:
+        lim = self.birth_suppress * max(s.ar, r)
+        if math.hypot(cx - s.ax, cy - s.ay) < lim:
+            return True
+        if s.last_xy is not None and math.hypot(cx - s.last_xy[0], cy - s.last_xy[1]) < lim:
+            return True
+        return False
+
     def _migrate(self, d, now: float) -> bool:
         """The cook slid a patty to another spot: the place moves, the timer stays."""
         best, bd = None, 1e9
@@ -570,6 +594,7 @@ class SlotEngine:
                                                       best.seen_ts + 0.01),
                         "lab_before": self._mean_lab(best.lab_hist, best.seen_ts - 6.0,
                                                      best.seen_ts + 0.01)}
+        self.shadows.append((now, best.ax, best.ay, best.ar))
         best.ax, best.ay, best.ar = d[0], d[1], d[2]
         best.absent_since = None
         best.seen_ts = now
@@ -603,6 +628,7 @@ class SlotEngine:
                 "elapsed": round(elapsed, 1), "target": target, "bonus": s.bonus,
                 "deadline": round(now - elapsed + target, 2),
                 "cheesed": s.cheesed, "face": s.face,
+                "provisional": (now - s.placed_ts) < self.show_after,
                 "side_a": round(s.side_time["A"] + (elapsed - s.side_time[s.side]
                                                     if s.side == "A" else 0), 1),
                 "side_b": round(s.side_time["B"] + (elapsed - s.side_time[s.side]

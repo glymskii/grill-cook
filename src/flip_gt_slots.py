@@ -174,36 +174,54 @@ def candidates(tag, step_L=14.0, step_b=10.0, burst=22.0, merge=10.0):
 def score(tag, window=12.0):
     gt = json.loads((ROOT / f"data/flip_gt_slots_{tag}.json").read_text())
     truth = [(int(sid), t) for sid, ts in gt["flips"].items() for t in ts]
+    extra = gt.get("extra", {})
+    truth += [(("xy", x, y), t) for x, y, t in extra.get("flips", [])]
     ev = json.loads((ROOT / f"data/slot_events_{tag}.json").read_text())
     life = json.loads((ROOT / SRC[tag][1]).read_text())
-    found = [(e["pid"], e["ts_video"], e.get("x"), e.get("y")) for e in ev if e["type"] == "flip"]
+    # events from slot_life carry no coordinates: resolve the place through the
+    # life file of the SAME run, by the id that run handed out
+    new_life_f = ROOT / f"out/v9_review/life_{tag}_new.json"
+    new_life = json.loads(new_life_f.read_text()) if new_life_f.exists() else {}
+    def xy(e):
+        if e.get("x") is not None:
+            return e["x"], e["y"]
+        s = new_life.get(str(e["pid"]))
+        return (s["anchor"][0], s["anchor"][1]) if s else (None, None)
+    found = [(e["pid"], e["ts_video"]) + xy(e) for e in ev if e["type"] == "flip"]
     # match by PLACE and time, not by slot id: engine ids need not equal the
     # ids the truth was labelled with
     def place(sid):
+        if isinstance(sid, tuple):          # ("xy", x, y): addressed by place
+            return sid[1], sid[2]
         return life[str(sid)]["anchor"][:2]
     unclear = [(int(sid), place(int(sid)), t) for sid, ts in gt.get("unclear", {}).items() for t in ts]
+    unclear += [(None, (x, y), t) for x, y, t in extra.get("unclear", [])]
     # an engine flip at a moment the eye could not judge is neither a hit nor
     # a false alarm: it leaves the score entirely
     def same_place(pid, fx, fy, sid, pxy, tol):
-        return pid == sid or (fx is not None and math.hypot(fx - pxy[0], fy - pxy[1]) <= tol)
+        return fx is not None and math.hypot(fx - pxy[0], fy - pxy[1]) <= tol
     found = [f for f in found
-             if not any(abs(f[1] - t) <= window and same_place(f[0], f[2], f[3], sid, pxy, 0.035)
+             if not any(abs(f[1] - t) <= window and same_place(f[0], f[2], f[3], sid, pxy, 0.05)
                         for sid, pxy, t in unclear)]
-    # two passes: an exact slot id first (same engine lineage), then the same
-    # place with a tolerance tighter than a patty radius - neighbours touch
-    hit_truth, hit_found = set(), set()
-    for by_id in (True, False):
-        for i, (sid, t) in enumerate(truth):
-            if i in hit_truth:
+    # Match by PLACE only, nearest pair first across the whole set: slot ids
+    # do not survive an engine change, neighbours touch, and a greedy walk in
+    # truth order hands a flip to the wrong neighbour when two anchors sit
+    # within a radius of each other
+    pairs = []
+    for i, (sid, t) in enumerate(truth):
+        px, py = place(sid)
+        for j, (pid, ft, fx, fy) in enumerate(found):
+            if fx is None or abs(ft - t) > window:
                 continue
-            px, py = place(sid)
-            for j, (pid, ft, fx, fy) in enumerate(found):
-                if j in hit_found or abs(ft - t) > window:
-                    continue
-                ok = (pid == sid) if by_id else (fx is not None and math.hypot(fx - px, fy - py) <= 0.035)
-                if ok:
-                    hit_truth.add(i); hit_found.add(j)
-                    break
+            d = math.hypot(fx - px, fy - py)
+            if d <= 0.05:
+                pairs.append((d, abs(ft - t), i, j))
+    pairs.sort()
+    hit_truth, hit_found = set(), set()
+    for d, dt, i, j in pairs:
+        if i in hit_truth or j in hit_found:
+            continue
+        hit_truth.add(i); hit_found.add(j)
     rec = len(hit_truth) / max(1, len(truth))
     prec = len(hit_found) / max(1, len(found))
     print(f"{tag}: truth {len(truth)} flips, engine {len(found)} flips -> "

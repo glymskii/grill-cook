@@ -151,6 +151,10 @@ def main():
                 put(frame, "DRESSED", (x, y - r // 8), r / 150, (235, 200, 60), 2)
                 put(frame, f"{mm_}:{ss:02d}", (x, y + int(r * 0.32)), r / 110, WHITE, 2)
                 continue
+            if p.get("provisional"):
+                # a slot still proving itself: a thin quiet ring, no countdown
+                cv2.circle(frame, (x, y), r, (150, 140, 130), 2, cv2.LINE_AA)
+                continue
             if remain <= -tl:
                 ring, over, any_over = RED, True, True
             elif remain <= 10:
