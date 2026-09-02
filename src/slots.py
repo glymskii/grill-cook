@@ -64,6 +64,7 @@ class Slot:
     face_quiet: int = 0            # readings taken while settled and occupied
     face_quiet_other: int = 0      # ...of which called this patty 'not a patty'
     last_xy: tuple | None = None   # where the patty was last actually seen
+    base_L: float | None = None    # this side's own brightness, taken once it has settled
     sku: str | None = None                # which standard applies, once the patty has shown its colour
 
     def elapsed(self, now: float) -> float:
@@ -250,6 +251,7 @@ class SlotEngine:
                           "side_b": round(s.side_time["B"], 1), "flips": s.flips,
                           "total": round(total, 1)})
         s.side, s.side_started, s.side_time = "A", now, {"A": 0.0, "B": 0.0}
+        s.base_L = None
         s.flips, s.bonus, s.last_flip_ts = 0, 0.0, 0.0
         s.placed_ts = now
         self.order = sorted([(t, sid) for t, sid in self.order if sid != s.sid] + [(now, s.sid)])
@@ -320,6 +322,12 @@ class SlotEngine:
             if trusted and before_face == 1 and after_face == 0 and dL >= self.flip_dl:
                 self._swap(s, now)
                 return bump("no/swap")
+            if dL >= self.flip_dl and s.base_L is not None and before_lab[0] >= s.base_L + self.flip_dl:
+                # Crust only ever darkens. If the place had become BRIGHTER than
+                # this side's own baseline and now drops back, something bright
+                # arrived and left - a topping, a paler patty carried across, a
+                # dressed patty swapped out - and that is not a turn.
+                return bump("no/back-to-baseline")
             if dL >= self.flip_dl:
                 # A hand's shadow darkens a crop by 19-25 L without turning
                 # anything. Where the classifier is trusted and saw the same
@@ -367,6 +375,7 @@ class SlotEngine:
         s.side_time[s.side] = elapsed
         s.side = "B" if s.side == "A" else "A"
         s.side_started = now
+        s.base_L = None
         s.flips += 1
         s.last_flip_ts = now
         s.flip_feedback = grade
@@ -435,6 +444,11 @@ class SlotEngine:
                 c2 = frame[max(0, cy - R2):cy + R2, max(0, cx - R2):cx + R2]
                 if c2.size:
                     crops.append((s, c2))
+        for s in self.slots.values():
+            if s.anchored and s.base_L is None and 30 <= now - s.side_started <= 40:
+                Ls = [l[0] for t, l in s.lab_hist if t >= now - 10]
+                if len(Ls) >= 10:
+                    s.base_L = float(st.median(Ls))
         if plate_rings:
             # Light moves the whole plate at once; a neighbour being flipped
             # moves one ring. The verdict asks the plate, not the ring.
